@@ -32,11 +32,13 @@ WebSocket Flow:
 
 from __future__ import annotations
 
+import array
 import asyncio
 import json
+import math
 import time
 import uuid
-from typing import Optional
+from typing import Any, Dict, Optional
 from datetime import datetime
 
 from fastapi import (
@@ -65,8 +67,10 @@ from apps.rtagent.backend.src.orchestration.artagent.cm_utils import (
 from apps.rtagent.backend.src.ws_helpers.shared_ws import (
     _get_connection_metadata,
     _set_connection_metadata,
+    send_session_envelope,
     send_tts_audio,
 )
+from apps.rtagent.backend.src.ws_helpers.barge_in import BargeInController
 from apps.rtagent.backend.src.ws_helpers.envelopes import (
     make_envelope,
     make_status_envelope,
@@ -76,6 +80,7 @@ from apps.rtagent.backend.src.ws_helpers.envelopes import (
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.postcall.push import build_and_flush
 from src.stateful.state_managment import MemoManager
+from src.pools.session_manager import SessionContext
 from utils.ml_logging import get_logger
 
 # V1 components
@@ -94,6 +99,32 @@ tracer = trace.get_tracer(__name__)
 _STATE_SENTINEL = object()
 
 router = APIRouter()
+
+
+
+
+def _pcm16le_rms(audio_bytes: bytes) -> float:
+    if not audio_bytes:
+        return 0.0
+
+    sample_count = len(audio_bytes) // 2
+    if sample_count <= 0:
+        return 0.0
+
+    samples = array.array("h")
+    try:
+        samples.frombytes(audio_bytes[: sample_count * 2])
+    except Exception:
+        return 0.0
+
+    if not samples:
+        return 0.0
+
+    accum = 0.0
+    for value in samples:
+        accum += float(value * value)
+
+    return math.sqrt(accum / len(samples))
 
 @router.get(
     "/status",
@@ -355,13 +386,13 @@ async def browser_conversation_endpoint(
             websocket.state.conn_id = conn_id
 
             # Initialize conversation session
-            memory_manager = await _initialize_conversation_session(
+            memory_manager, session_metadata = await _initialize_conversation_session(
                 websocket, session_id, conn_id, orchestrator
             )
 
             # Register session thread-safely
             await websocket.app.state.session_manager.add_session(
-                session_id, memory_manager, websocket
+                session_id, memory_manager, websocket, metadata=session_metadata
             )
 
             # Track WebSocket connection for session metrics
@@ -411,13 +442,13 @@ async def _initialize_conversation_session(
     session_id: str,
     conn_id: str,
     orchestrator: Optional[callable],
-) -> MemoManager:
-    """Initialize conversation session with consolidated state management.
+) -> tuple[MemoManager, Dict[str, Any]]:
+    """Initialize conversation session with consolidated state and metadata.
 
     :param websocket: WebSocket connection for the conversation
     :param session_id: Unique identifier for the conversation session
     :param orchestrator: Optional orchestrator for conversation routing
-    :return: Initialized MemoManager instance for conversation state
+    :return: Tuple of (MemoManager, metadata dict) for downstream registration
     :raises Exception: If session initialization fails
     """
     redis_mgr = websocket.app.state.redis
@@ -488,184 +519,104 @@ async def _initialize_conversation_session(
     except RuntimeError:
         websocket.state._loop = None
 
-    # Set up WebSocket state through connection manager metadata (for compatibility)
+    session_context = getattr(websocket.state, "session_context", None)
+    if not isinstance(session_context, SessionContext) or session_context.session_id != session_id:
+        session_context = SessionContext(
+            session_id=session_id,
+            memory_manager=memory_manager,
+            websocket=websocket,
+        )
+        websocket.state.session_context = session_context
+
+    initial_metadata = {
+        "cm": memory_manager,
+        "session_id": session_id,
+        "tts_client": tts_client,
+        "lt": latency_tool,
+        "is_synthesizing": False,
+        "user_buffer": "",
+        "tts_cancel_event": tts_cancel_event,
+        "audio_playing": False,
+        "tts_cancel_requested": False,
+        "greeting_sent": greeting_sent,
+        "last_tts_start_ts": 0.0,
+        "last_tts_end_ts": 0.0,
+        "energy_barge_hits": 0,
+        "energy_last_hit_ts": 0.0,
+        "energy_last_trigger_ts": 0.0,
+    }
+
+    for key, value in initial_metadata.items():
+        session_context.set_metadata_nowait(key, value)
+        setattr(websocket.state, key, value)
+
     conn_manager = websocket.app.state.conn_manager
     connection = conn_manager._conns.get(conn_id)
     if connection:
         handler = connection.meta.handler
-        base_state = {
-            "cm": memory_manager,
-            "session_id": session_id,
-            "tts_client": tts_client,
-            "lt": latency_tool,
-            "is_synthesizing": False,
-            "user_buffer": "",
-            "tts_cancel_event": tts_cancel_event,
-            "audio_playing": False,
-            "tts_cancel_requested": False,
-            "greeting_sent": greeting_sent,
-            "last_tts_start_ts": 0.0,
-            "last_tts_end_ts": 0.0,
-        }
-
-        if handler is None or isinstance(handler, dict):
-            merged = handler or {}
-            merged.update(base_state)
-            connection.meta.handler = merged
+        if handler is None:
+            connection.meta.handler = dict(initial_metadata)
+        elif isinstance(handler, dict):
+            handler.update(initial_metadata)
         else:
-            for key, value in base_state.items():
+            for key, value in initial_metadata.items():
                 setattr(handler, key, value)
 
-        for key, value in base_state.items():
-            _set_connection_metadata(websocket, key, value)
-
-    # Helper function to access connection metadata with websocket fallbacks
     def get_metadata(key: str, default=None):
-        value = getattr(websocket.state, key, _STATE_SENTINEL)
-        if value is not _STATE_SENTINEL:
-            return value
         return _get_connection_metadata(websocket, key, default)
 
     def set_metadata(key: str, value):
-        setattr(websocket.state, key, value)
         if not _set_connection_metadata(websocket, key, value):
-            current_conn = conn_manager._conns.get(conn_id)
-            if current_conn:
-                handler = current_conn.meta.handler
-                if handler is None:
-                    current_conn.meta.handler = {key: value}
-                elif isinstance(handler, dict):
-                    handler[key] = value
-                else:
-                    setattr(handler, key, value)
+            setattr(websocket.state, key, value)
 
     def set_metadata_threadsafe(key: str, value):
         loop = getattr(websocket.state, "_loop", None)
         if loop and loop.is_running():
             loop.call_soon_threadsafe(set_metadata, key, value)
         else:
-            # Not thread-safe to call set_metadata directly if loop is None
-            logger.warning(
-                "[%s] set_metadata_threadsafe called with no running event loop; metadata update may not be thread-safe.",
-                session_id,
-            )
-            # Optionally, raise an exception instead of logging:
-            # raise RuntimeError("No running event loop for thread-safe metadata update")
+            set_metadata(key, value)
 
-    async def _perform_barge_in(
-        trigger: str,
-        stage: str,
-        *,
-        energy_level: float | None = None,
-    ) -> None:
-        """Cancel active TTS playback and orchestration tasks for barge-in."""
-        is_synthesizing = get_metadata("is_synthesizing", False)
-        audio_playing = get_metadata("audio_playing", False)
-        cancel_requested = get_metadata("tts_cancel_requested", False)
-
-        if not (is_synthesizing or audio_playing or cancel_requested):
+    def signal_tts_cancel() -> None:
+        cancel_event = get_metadata("tts_cancel_event")
+        if not cancel_event:
             return
 
-        if get_metadata("barge_in_inflight", False):
-            return
-
-        set_metadata("barge_in_inflight", True)
-        now = time.monotonic()
-
-        try:
-            last_trigger = get_metadata("last_barge_in_trigger", None)
-            last_ts = get_metadata("last_barge_in_ts", 0.0)
-            if last_trigger == trigger and (now - last_ts) < 0.05:
-                return
-
-            set_metadata("last_barge_in_ts", now)
-            set_metadata("last_barge_in_trigger", trigger)
-            set_metadata("is_synthesizing", False)
-            set_metadata("audio_playing", False)
-            set_metadata("tts_cancel_requested", True)
-
-            logger.info(
-                "[%s] Barge-in triggered (trigger=%s, stage=%s, energy=%.2f, was_syn=%s, was_playing=%s)",
-                session_id,
-                trigger,
-                stage,
-                energy_level or 0.0,
-                is_synthesizing,
-                audio_playing,
-            )
-
-            tts_client = get_metadata("tts_client")
-            if tts_client:
-                try:
-                    tts_client.stop_speaking()
-                except Exception as stop_exc:  # noqa: BLE001
-                    logger.debug("[%s] TTS stop_speaking error during barge-in: %s", session_id, stop_exc)
-
-            cancel_event = get_metadata("tts_cancel_event")
-            if cancel_event:
-                cancel_event.set()
-
-            tasks = getattr(websocket.state, "orchestration_tasks", set())
-            active_tasks = [task for task in list(tasks) if task and not task.done()]
-            if active_tasks:
-                logger.info(
-                    "[%s] Cancelling %s orchestration task(s) due to barge-in", session_id, len(active_tasks)
-                )
-                for task in active_tasks:
-                    task.cancel()
-                for task in active_tasks:
-                    try:
-                        await asyncio.wait_for(task, timeout=0.3)
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
-                        pass
-                    except Exception as cancel_exc:  # noqa: BLE001
-                        logger.debug(
-                            "[%s] Orchestration cancel error during barge-in: %s",
-                            session_id,
-                            cancel_exc,
-                        )
-                    finally:
-                        tasks.discard(task)
-
-            cancel_msg = {
-                "type": "control",
-                "action": "tts_cancelled",
-                "reason": "barge_in",
-                "trigger": trigger,
-                "at": stage,
-                "session_id": session_id,
-            }
-            if energy_level is not None:
-                cancel_msg["energy"] = round(energy_level, 2)
-
-            try:
-                await websocket.app.state.conn_manager.send_to_connection(
-                    conn_id, cancel_msg
-                )
-            except Exception as send_exc:  # noqa: BLE001
-                logger.debug("[%s] Failed to dispatch barge-in cancel control: %s", session_id, send_exc)
-
-        finally:
-            set_metadata("barge_in_inflight", False)
-
-    def request_barge_in(
-        trigger: str,
-        stage: str,
-        *,
-        energy_level: float | None = None,
-    ) -> None:
         loop = getattr(websocket.state, "_loop", None)
         if loop and loop.is_running():
-            loop.call_soon_threadsafe(
-                asyncio.create_task,
-                _perform_barge_in(trigger, stage, energy_level=energy_level),
-            )
-        else:
-            asyncio.create_task(_perform_barge_in(trigger, stage, energy_level=energy_level))
+            loop.call_soon_threadsafe(cancel_event.set)
+            return
 
-    set_metadata("request_barge_in", request_barge_in)
+        try:
+            cancel_event.set()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "[%s] Unable to signal TTS cancel event immediately: %s",
+                session_id,
+                exc,
+            )
+
+    barge_in_controller = BargeInController(
+        websocket=websocket,
+        session_id=session_id,
+        conn_id=conn_id,
+        get_metadata=get_metadata,
+        set_metadata=set_metadata,
+        signal_tts_cancel=signal_tts_cancel,
+        logger=logger,
+    )
+    websocket.state.barge_in_controller = barge_in_controller
+    initial_metadata.update(
+        {
+            "request_barge_in": barge_in_controller.request,
+            "last_barge_in_ts": 0.0,
+            "barge_in_inflight": False,
+            "last_barge_in_trigger": None,
+        }
+    )
+    set_metadata("request_barge_in", barge_in_controller.request)
     set_metadata("last_barge_in_ts", 0.0)
     set_metadata("barge_in_inflight", False)
+    set_metadata("last_barge_in_trigger", None)
 
     if not greeting_sent:
         # Send greeting message using new envelope format
@@ -702,10 +653,23 @@ async def _initialize_conversation_session(
             )
     else:
         active_agent = cm_get(memory_manager, "active_agent", None)
+        active_agent_voice = cm_get(memory_manager, "active_agent_voice", None)
+        if isinstance(active_agent_voice, dict):
+            active_voice_name = active_agent_voice.get("voice")
+        else:
+            active_voice_name = active_agent_voice
+
         resume_text = (
-            f"{active_agent} is ready to continue assisting you."
+            f"Specialist \"{active_agent}\" is ready to continue assisting you."
             if active_agent
             else "Session resumed with your previous assistant."
+        )
+        latency_tool = get_metadata("lt")
+        await send_tts_audio(
+            resume_text,
+            websocket,
+            latency_tool=latency_tool,
+            voice_name=active_voice_name,
         )
         resume_envelope = make_status_envelope(
             resume_text,
@@ -724,7 +688,51 @@ async def _initialize_conversation_session(
     def on_partial(txt: str, lang: str, speaker_id: str):
         if not txt or not txt.strip():
             return
+        txt = txt.strip()
         logger.info(f"[{session_id}] User (partial) in {lang}: {txt}")
+
+        partial_seq = (get_metadata("stt_partial_seq", 0) or 0) + 1
+        set_metadata_threadsafe("stt_partial_seq", partial_seq)
+
+        partial_payload = {
+            "type": "streaming",
+            "streaming_type": "stt_partial",
+            "content": txt,
+            "language": lang,
+            "speaker_id": speaker_id,
+            "session_id": session_id,
+            "is_final": False,
+            "sequence": partial_seq,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+        partial_envelope = make_event_envelope(
+            event_type="stt_partial",
+            event_data=partial_payload,
+            sender="STT",
+            topic="session",
+            session_id=session_id,
+        )
+
+        conn_manager = getattr(websocket.app.state, "conn_manager", None)
+        loop = getattr(websocket.state, "_loop", None)
+        if conn_manager:
+            try:
+                if loop and loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        conn_manager.send_to_connection(conn_id, partial_envelope),
+                        loop,
+                    )
+                else:
+                    logger.debug(
+                        "[%s] Unable to forward partial transcript; event loop unavailable",
+                        session_id,
+                    )
+            except Exception as send_exc:  # noqa: BLE001
+                logger.debug(
+                    "[%s] Failed to forward partial transcript: %s",
+                    session_id,
+                    send_exc,
+                )
         try:
             now = time.monotonic()
             is_synth = get_metadata("is_synthesizing", False)
@@ -741,17 +749,15 @@ async def _initialize_conversation_session(
                 recent_tts = within_active_window and (no_recorded_end or ended_recently)
 
             if is_synth or audio_playing or recent_tts:
-                cancel_event = get_metadata("tts_cancel_event")
-                if cancel_event:
-                    cancel_event.set()
+                signal_tts_cancel()
 
                 set_metadata_threadsafe("tts_cancel_requested", True)
                 set_metadata_threadsafe("audio_playing", False)
                 set_metadata_threadsafe("is_synthesizing", False)
             elif cancel_requested:
+                request_cancel = get_metadata("request_barge_in")
                 set_metadata_threadsafe("tts_cancel_requested", False)
-
-            request_cancel = get_metadata("request_barge_in")
+                
             if callable(request_cancel):
                 request_cancel("stt_partial", "partial")
             else:
@@ -850,7 +856,7 @@ async def _initialize_conversation_session(
         session_id,
         getattr(stt_tier, "value", "unknown"),
     )
-    return memory_manager
+    return memory_manager, initial_metadata
 
 
 async def _process_dashboard_messages(websocket: WebSocket, client_id: str) -> None:
@@ -906,29 +912,20 @@ async def _process_conversation_messages(
         attributes={"session_id": session_id},
     ) as span:
         try:
-            # Get connection manager for this session
-            conn_manager = websocket.app.state.conn_manager
-            # Helper function to access connection metadata
-            _STATE_SENTINEL = object()
+            session_context = getattr(websocket.state, "session_context", None)
 
             def get_metadata(key: str, default=None):
-                value = getattr(websocket.state, key, _STATE_SENTINEL)
-                if value is not _STATE_SENTINEL:
-                    return value
+                if session_context:
+                    value = session_context.get_metadata_nowait(key, _STATE_SENTINEL)
+                    if value is not _STATE_SENTINEL:
+                        return value
                 return _get_connection_metadata(websocket, key, default)
 
             def set_metadata(key: str, value):
-                setattr(websocket.state, key, value)
+                if session_context:
+                    session_context.set_metadata_nowait(key, value)
                 if not _set_connection_metadata(websocket, key, value):
-                    current_conn = conn_manager._conns.get(conn_id)
-                    if current_conn:
-                        handler = current_conn.meta.handler
-                        if handler is None:
-                            current_conn.meta.handler = {key: value}
-                        elif isinstance(handler, dict):
-                            handler[key] = value
-                        else:
-                            setattr(handler, key, value)
+                    setattr(websocket.state, key, value)
 
             message_count = 0
             while (
@@ -955,6 +952,13 @@ async def _process_conversation_messages(
 
                     stt_client = get_metadata("stt_client")
                     if stt_client:
+                        is_synth = get_metadata("is_synthesizing", False)
+                        audio_playing = get_metadata("audio_playing", False)
+                        cancel_requested = get_metadata("tts_cancel_requested", False)
+
+                        if cancel_requested and not (is_synth or audio_playing):
+                            set_metadata("tts_cancel_requested", False)
+
                         if getattr(stt_client, "push_stream", None) is None:
                             logger.warning(
                                 "[%s] STT push_stream not ready; dropping audio frame",
@@ -1017,6 +1021,28 @@ async def _process_conversation_messages(
                             logger.error(
                                 f"[PERF] Orchestration task failed for session {session_id}: {e}"
                             )
+                            error_payload = {
+                                "type": "orchestration_error",
+                                "message": "Conversation processing failed.",
+                                "details": str(e),
+                                "session_id": session_id,
+                                "timestamp": datetime.utcnow().isoformat() + "Z",
+                            }
+                            error_envelope = make_event_envelope(
+                                event_type="orchestration_error",
+                                event_data=error_payload,
+                                sender="System",
+                                topic="session",
+                                session_id=session_id,
+                            )
+                            try:
+                                await websocket.app.state.conn_manager.send_to_connection(
+                                    conn_id, error_envelope
+                                )
+                            except Exception as send_exc:
+                                logger.debug(
+                                    f"[{session_id}] Failed to forward orchestration error: {send_exc}"
+                                )
                         finally:
                             # Clean up completed task from tracking set
                             orchestration_tasks = getattr(

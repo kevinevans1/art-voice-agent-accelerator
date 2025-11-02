@@ -43,6 +43,7 @@ from opentelemetry.trace import Status, StatusCode
 from src.pools.connection_manager import ThreadSafeConnectionManager
 from src.pools.session_metrics import ThreadSafeSessionMetrics
 from .src.services import AzureOpenAIClient, CosmosDBMongoCoreManager, AzureRedisManager, SpeechSynthesizer, StreamingSpeechRecognizerFromBytes
+from src.aoai.client_manager import AoaiClientManager
 from config.app_config import AppConfig
 from config.app_settings import (
     AGENT_AUTH_CONFIG,
@@ -345,8 +346,15 @@ async def lifespan(app: FastAPI):
     add_step("speech", start_speech_pools, stop_speech_pools)
 
     async def start_aoai_client() -> None:
-        app.state.aoai_client = AzureOpenAIClient
-        logger.info("Azure OpenAI client attached")
+        session_manager = getattr(app.state, "session_manager", None)
+        aoai_manager = AoaiClientManager(
+            session_manager=session_manager,
+            initial_client=AzureOpenAIClient,
+        )
+        app.state.aoai_client_manager = aoai_manager
+        # Expose the underlying client for legacy call-sites while we migrate.
+        app.state.aoai_client = await aoai_manager.get_client()
+        logger.info("Azure OpenAI client attached", extra={"manager_enabled": True})
 
     add_step("aoai", start_aoai_client)
 
