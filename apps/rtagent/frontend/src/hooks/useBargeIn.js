@@ -1,38 +1,9 @@
 import { useCallback } from 'react';
 
-// Marks the most recent assistant message as interrupted when a barge-in occurs.
-export const applyBargeInMarker = (messages, meta = {}) => {
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return messages;
-  }
-
-  const updated = [...messages];
-  for (let index = updated.length - 1; index >= 0; index -= 1) {
-    const msg = updated[index];
-    if (msg?.speaker === "Assistant") {
-      if (msg.interrupted) {
-        return updated;
-      }
-
-      updated[index] = {
-        ...msg,
-        streaming: false,
-        interrupted: true,
-        interruptionMeta: meta,
-        text: (msg.text || "").trimEnd(),
-      };
-      return updated;
-    }
-  }
-
-  return updated;
-};
-
 const toMs = (value) => (typeof value === "number" ? Math.round(value) : undefined);
 
 const useBargeIn = ({
   appendLog,
-  setMessages,
   setActiveSpeaker,
   assistantStreamGenerationRef,
   pcmSinkRef,
@@ -56,8 +27,6 @@ const useBargeIn = ({
         pcmSinkRef.current.port.postMessage({ type: "clear" });
       }
       playbackActiveRef.current = false;
-
-      setMessages((prev) => applyBargeInMarker(prev, meta));
       setActiveSpeaker(null);
     },
     [
@@ -66,7 +35,6 @@ const useBargeIn = ({
       pcmSinkRef,
       playbackActiveRef,
       setActiveSpeaker,
-      setMessages,
     ],
   );
 

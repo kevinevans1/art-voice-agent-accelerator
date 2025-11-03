@@ -287,33 +287,6 @@ const styles = {
     whiteSpace: "pre-wrap",
   },
 
-  assistantBubbleInterrupted: {
-    border: "1px dashed #f97316",
-    boxShadow: "0 0 0 1px rgba(249, 115, 22, 0.18)",
-    background: "linear-gradient(135deg, rgba(255, 247, 237, 0.85) 0%, #67d8ef 80%)",
-    position: "relative",
-  },
-
-  interruptionBadge: {
-    display: "inline-block",
-    marginLeft: "8px",
-    padding: "0 6px",
-    fontSize: "11px",
-    fontWeight: "600",
-    color: "#9a3412",
-    backgroundColor: "rgba(253, 186, 116, 0.3)",
-    border: "1px solid rgba(249, 115, 22, 0.4)",
-    borderRadius: "999px",
-    verticalAlign: "baseline",
-  },
-
-  interruptionFootnote: {
-    marginTop: "6px",
-    fontSize: "11px",
-    color: "#9a3412",
-    fontStyle: "italic",
-  },
-  
   // Agent name label (appears above specialist bubbles)
   agentNameLabel: {
     fontSize: "10px",
@@ -1983,7 +1956,7 @@ const WaveformVisualization = ({ speaker, audioLevel = 0, outputAudioLevel = 0 }
  *  CHAT BUBBLE
  * ------------------------------------------------------------------ */
 const ChatBubble = ({ message }) => {
-  const { speaker, text, isTool, streaming, interrupted, interruptionMeta } = message;
+  const { speaker, text, isTool, streaming } = message;
   const isUser = speaker === "User";
   const isSpecialist = speaker?.includes("Specialist");
   const isAuthAgent = speaker === "Auth Agent";
@@ -2003,12 +1976,7 @@ const ChatBubble = ({ message }) => {
     );
   }
   
-  const bubbleStyle = isUser
-    ? styles.userBubble
-    : {
-        ...styles.assistantBubble,
-        ...(interrupted ? styles.assistantBubbleInterrupted : {}),
-      };
+  const bubbleStyle = isUser ? styles.userBubble : styles.assistantBubble;
 
   return (
     <div style={isUser ? styles.userMessage : styles.assistantMessage}>
@@ -2022,17 +1990,7 @@ const ChatBubble = ({ message }) => {
         {text.split("\n").map((line, i) => (
           <div key={i}>{line}</div>
         ))}
-        {interrupted && (
-          <span style={styles.interruptionBadge}>[audio cut off]</span>
-        )}
         {streaming && <span style={{ opacity: 0.7 }}>▌</span>}
-        {interrupted && (
-          <div style={styles.interruptionFootnote}>
-            Barge-in stopped playback
-            {interruptionMeta?.trigger ? ` · trigger: ${interruptionMeta.trigger}` : ""}
-            {interruptionMeta?.at ? ` · stage: ${interruptionMeta.at}` : ""}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -2288,7 +2246,6 @@ function RealTimeVoiceApp() {
     finalizeBargeInClear,
   } = useBargeIn({
     appendLog,
-    setMessages,
     setActiveSpeaker,
     assistantStreamGenerationRef,
     pcmSinkRef,
@@ -2690,9 +2647,6 @@ function RealTimeVoiceApp() {
     const pushIfChanged = (arr, msg) => {
       if (arr.length === 0) return [...arr, msg];
       const last = arr[arr.length - 1];
-      if (last?.interrupted) {
-        return [...arr, msg];
-      }
       if (last.speaker === msg.speaker && last.text === msg.text) return arr;
       return [...arr, msg];
     };
@@ -2972,27 +2926,6 @@ function RealTimeVoiceApp() {
             }
           }
           playbackActiveRef.current = !isFinalChunk;
-          if (isFinalChunk) {
-            setMessages((prev) => {
-              let mutated = false;
-              const updated = prev.slice();
-              for (let idx = updated.length - 1; idx >= 0; idx -= 1) {
-                const msg = updated[idx];
-                if (msg?.speaker === "Assistant") {
-                  if (msg.interrupted) {
-                    updated[idx] = {
-                      ...msg,
-                      interrupted: false,
-                      interruptionMeta: undefined,
-                    };
-                    mutated = true;
-                  }
-                  break;
-                }
-              }
-              return mutated ? updated : prev;
-            });
-          }
           return; // handled
         } catch (error) {
           logger.error("Error processing audio_data:", error);
@@ -3033,33 +2966,16 @@ function RealTimeVoiceApp() {
         setActiveSpeaker(streamingSpeaker);
         setMessages(prev => {
           const latest = prev.at(-1);
-          const inheritsInterrupt = Boolean(latest?.interrupted);
-          const interruptionMeta = inheritsInterrupt ? latest?.interruptionMeta : undefined;
-          if (latest?.interrupted) {
-            return [
-              ...prev,
-              {
-                speaker: streamingSpeaker,
-                text: txt,
-                streaming: true,
-                streamGeneration,
-                interrupted: true,
-                interruptionMeta,
-              },
-            ];
-          }
           if (
             latest?.streaming &&
             latest?.speaker === streamingSpeaker &&
             latest?.streamGeneration === streamGeneration
           ) {
-            return prev.map((m,i)=>
-              i===prev.length-1
+            return prev.map((m, i) =>
+              i === prev.length - 1
                 ? {
                     ...m,
                     text: m.text + txt,
-                    interrupted: inheritsInterrupt,
-                    interruptionMeta,
                   }
                 : m,
             );
@@ -3071,8 +2987,6 @@ function RealTimeVoiceApp() {
               text: txt,
               streaming: true,
               streamGeneration,
-              interrupted: inheritsInterrupt,
-              interruptionMeta,
             },
           ];
         });
@@ -3088,26 +3002,24 @@ function RealTimeVoiceApp() {
         registerAssistantFinal(assistantSpeaker);
         setActiveSpeaker("Assistant");
         setMessages(prev => {
-          if (prev.at(-1)?.streaming) {
-            return prev.map((m,i)=>
-              i===prev.length-1
+          const latest = prev.at(-1);
+          if (
+            latest?.streaming &&
+            latest?.speaker === assistantSpeaker
+          ) {
+            return prev.map((m, i) =>
+              i === prev.length - 1
                 ? {
                     ...m,
                     text: txt,
                     streaming: false,
-                    interrupted: m.interrupted,
-                    interruptionMeta: m.interruptionMeta,
                   }
                 : m,
             );
           }
-          const latest = prev.at(-1);
-          const inheritsInterrupt = Boolean(latest?.speaker === assistantSpeaker && latest?.interrupted);
           return pushIfChanged(prev, {
-            speaker:"Assistant",
-            text:txt,
-            interrupted: inheritsInterrupt,
-            interruptionMeta: inheritsInterrupt ? latest?.interruptionMeta : undefined,
+            speaker: assistantSpeaker,
+            text: txt,
           });
         });
 
