@@ -209,7 +209,37 @@ class ThreadBridge:
                     f"[{self.call_connection_id}] Enqueued speech event type={event.event_type.value} qsize={speech_queue.qsize()}"
                 )
         except asyncio.QueueFull:
-            logger.warning(f"[{self.call_connection_id}] Speech queue full, dropping event")
+            # Emergency clear oldest events if queue is consistently full
+            queue_size = speech_queue.qsize()
+            logger.warning(
+                f"[{self.call_connection_id}] Speech queue full (size={queue_size}), attempting emergency clear"
+            )
+            
+            # Try to clear old events to make room for new ones
+            cleared_count = 0
+            max_clear = min(3, queue_size // 2)  # Clear up to 3 events or half the queue
+            
+            for _ in range(max_clear):
+                try:
+                    old_event = speech_queue.get_nowait()
+                    cleared_count += 1
+                    logger.debug(
+                        f"[{self.call_connection_id}] Cleared old event: {old_event.event_type.value}"
+                    )
+                except asyncio.QueueEmpty:
+                    break
+            
+            # Now try to add the new event
+            try:
+                speech_queue.put_nowait(event)
+                logger.info(
+                    f"[{self.call_connection_id}] After emergency clear ({cleared_count} events), "
+                    f"successfully queued {event.event_type.value} (qsize={speech_queue.qsize()})"
+                )
+            except asyncio.QueueFull:
+                logger.error(
+                    f"[{self.call_connection_id}] Queue still full after emergency clear, dropping event {event.event_type.value}"
+                )
         except Exception:
             # Fallback to run_coroutine_threadsafe
             if self.main_loop and not self.main_loop.is_closed():
@@ -705,14 +735,25 @@ class RouteTurnThread:
         try:
             # Clear speech queue
             queue_size = self.speech_queue.qsize()
+            cleared_count = 0
+            
             while not self.speech_queue.empty():
                 try:
                     self.speech_queue.get_nowait()
+                    cleared_count += 1
                 except asyncio.QueueEmpty:
                     break
 
-            if queue_size > 2:  # Only log if significant clearing
-                logger.info(f"[{self.call_connection_id}] Cleared {queue_size} stale events")
+            if cleared_count > 2:  # Only log if significant clearing
+                logger.info(
+                    f"[{self.call_connection_id}] Cleared {cleared_count} stale events during barge-in "
+                    f"(queue was {queue_size}/{self.speech_queue.maxsize})"
+                )
+            elif queue_size >= self.speech_queue.maxsize * 0.8:  # Log if queue was getting full
+                logger.warning(
+                    f"[{self.call_connection_id}] Speech queue was nearly full ({queue_size}/{self.speech_queue.maxsize}) "
+                    f"during barge-in, cleared {cleared_count} events"
+                )
 
             # Cancel current response task
             if self.current_response_task and not self.current_response_task.done():
@@ -740,6 +781,29 @@ class RouteTurnThread:
                 await self.processing_task
             except asyncio.CancelledError:
                 pass
+        
+        # Clear any remaining events in speech queue to prevent buildup across sessions
+        await self._clear_speech_queue()
+    
+    async def _clear_speech_queue(self):
+        """Clear any remaining events from the speech queue."""
+        try:
+            queue_size = self.speech_queue.qsize()
+            if queue_size > 0:
+                # Drain all remaining events
+                cleared_count = 0
+                while not self.speech_queue.empty():
+                    try:
+                        self.speech_queue.get_nowait()
+                        cleared_count += 1
+                    except asyncio.QueueEmpty:
+                        break
+                
+                logger.info(
+                    f"[{self.call_connection_id}] Cleared {cleared_count} remaining speech events from queue during stop"
+                )
+        except Exception as e:
+            logger.error(f"[{self.call_connection_id}] Error clearing speech queue: {e}")
 
 
 class MainEventLoop:
@@ -1159,6 +1223,16 @@ class ACSMediaHandler:
                         f"[{self.call_connection_id}] Error cleaning up main event loop: {e}"
                     )
 
+                # Final cleanup: ensure speech queue is completely drained
+                try:
+                    await self._clear_speech_queue_final()
+                    logger.debug(f"[{self.call_connection_id}] Speech queue final cleanup completed")
+                except Exception as e:
+                    cleanup_errors.append(f"speech_queue_cleanup: {e}")
+                    logger.error(
+                        f"[{self.call_connection_id}] Error during final speech queue cleanup: {e}"
+                    )
+
                 if cleanup_errors:
                     logger.warning(
                         f"[{self.call_connection_id}] Media handler stopped with {len(cleanup_errors)} cleanup errors"
@@ -1171,6 +1245,27 @@ class ACSMediaHandler:
             except Exception as e:
                 logger.error(f"[{self.call_connection_id}] Critical stop error: {e}")
                 # Don't re-raise - ensure cleanup always completes
+
+    async def _clear_speech_queue_final(self):
+        """Final cleanup of speech queue during handler shutdown."""
+        try:
+            if hasattr(self, 'speech_queue') and self.speech_queue:
+                queue_size = self.speech_queue.qsize()
+                if queue_size > 0:
+                    # Drain all remaining events
+                    cleared_count = 0
+                    while not self.speech_queue.empty():
+                        try:
+                            self.speech_queue.get_nowait()
+                            cleared_count += 1
+                        except asyncio.QueueEmpty:
+                            break
+                    
+                    logger.info(
+                        f"[{self.call_connection_id}] Final cleanup: cleared {cleared_count} speech events from queue"
+                    )
+        except Exception as e:
+            logger.error(f"[{self.call_connection_id}] Error in final speech queue cleanup: {e}")
 
     @property
     def is_running(self) -> bool:
