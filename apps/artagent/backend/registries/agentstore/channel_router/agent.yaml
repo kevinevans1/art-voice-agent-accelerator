@@ -1,0 +1,102 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Channel Router Agent
+# ═══════════════════════════════════════════════════════════════════════════════
+# Meta-agent responsible for channel routing decisions.
+# Runs alongside domain agents to optimize customer experience.
+#
+# Responsibilities:
+#   - Monitor queue status and wait times
+#   - Decide when to offer channel switches
+#   - Coordinate cross-channel context
+#   - Optimize for customer satisfaction
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: ChannelRouter
+description: Meta-agent for intelligent channel routing and optimization
+
+# This agent runs in advisory mode - it doesn't directly interact with customers
+mode: advisory
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Voice Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+voice:
+  name: en-US-AvaMultilingualNeural
+  type: azure-standard
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+cascade_model:
+  deployment_id: gpt-4o
+  temperature: 0.3  # More deterministic for routing decisions
+  max_tokens: 512
+
+voicelive_model:
+  deployment_id: gpt-realtime
+  temperature: 0.3
+  max_tokens: 512
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tools
+# ─────────────────────────────────────────────────────────────────────────────
+tools:
+  # Queue monitoring
+  - check_queue_status
+  
+  # Channel management
+  - offer_channel_switch
+  - execute_channel_handoff
+  
+  # Context management
+  - get_customer_context
+  - update_customer_context
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Routing Rules (evaluated by this agent)
+# ─────────────────────────────────────────────────────────────────────────────
+routing_rules:
+  # Proactive channel switch triggers
+  proactive_triggers:
+    - condition: queue_wait_time > 120  # seconds
+      action: suggest_channel_switch
+      preferred_channel: whatsapp
+      priority: high
+      
+    - condition: queue_depth > 50
+      action: suggest_channel_switch
+      preferred_channel: either
+      priority: medium
+      
+    - condition: customer_sentiment < 0.3  # negative
+      action: suggest_human_escalation
+      priority: urgent
+      
+    - condition: issue_complexity == "document_required"
+      action: suggest_channel_switch
+      preferred_channel: whatsapp
+      reason: "Document sharing needed"
+
+  # Channel preferences by issue type
+  channel_preferences:
+    fraud_report:
+      primary: voice  # Sensitive, needs immediate attention
+      fallback: webchat
+      
+    account_inquiry:
+      primary: any
+      prefer_async: true  # Can be handled asynchronously
+      
+    document_submission:
+      primary: whatsapp  # Best for attachments
+      fallback: webchat
+      
+    complaint:
+      primary: voice  # Personal touch for complaints
+      escalate_if_unresolved: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt
+# ─────────────────────────────────────────────────────────────────────────────
+prompts:
+  path: prompt.jinja

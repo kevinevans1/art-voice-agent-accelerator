@@ -124,7 +124,10 @@ nav:
     - Overview: industry/README.md
     - Banking: industry/banking.md
     - Insurance: industry/insurance.md
+    - Utilities: industry/utilities.md
     - Healthcare: industry/healthcare.md
+  - Omnichannel:
+    - Architecture: architecture/omnichannel-handoff/README.md
   - Guides:
     - Repository Structure: guides/repository-structure.md
     - Utilities & Services: guides/utilities.md

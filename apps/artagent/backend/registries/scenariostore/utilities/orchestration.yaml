@@ -1,0 +1,218 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Utilities Omnichannel Scenario
+# ═══════════════════════════════════════════════════════════════════════════════
+# Multi-channel customer service for domestic utilities provider.
+# Handles billing, outages, payments, service requests across Voice/WhatsApp/WebChat.
+#
+# Azure AI Foundry Integration:
+#   - All agents deployed as a single Foundry project
+#   - Shared context via Foundry threads
+#   - Centralized evaluation and monitoring
+#
+# Industry: Utilities (Electric & Natural Gas)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: utilities
+description: Domestic utilities provider - billing, outages, payments, service requests
+icon: "⚡"
+industry: utilities
+
+# Azure AI Foundry Project Configuration
+foundry:
+  project_name: utilities-voice-agent
+  deployment_region: eastus2
+  # All agents share a single Foundry project for unified management
+  unified_project: true
+  # Thread management for cross-channel context
+  thread_config:
+    ttl_hours: 72  # Keep context for 3 days
+    share_across_channels: true
+
+# Starting agent
+start_agent: UtilitiesConcierge
+
+# Agents included in this scenario
+agents:
+  - UtilitiesConcierge    # Primary router and general inquiries
+  - BillingAgent          # Bill questions, payment plans, disputes
+  - OutageAgent           # Report outages, check status, restoration times
+  - ServiceAgent          # New service, transfers, disconnections
+  - UsageAgent            # Usage analysis, efficiency tips, meter reads
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-Agent Orchestration
+# ─────────────────────────────────────────────────────────────────────────────
+orchestration:
+  # Supervisor agents for proactive optimization
+  supervisors:
+    - agent: ChannelRouter
+      mode: advisory
+      trigger: continuous
+      can_interrupt: false
+      
+    - agent: OutageMonitor
+      mode: advisory
+      trigger: on_outage_detected
+      can_interrupt: true  # Can interrupt to alert about outages in customer's area
+
+  # Parallel execution for complex scenarios
+  parallel_execution:
+    enabled: true
+    max_concurrent_agents: 3
+    use_cases:
+      - outage_with_billing   # Check outage status while reviewing bill credits
+      - service_transfer      # Process transfer while checking final bill
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Handoff Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+handoff_type: announced
+
+handoffs:
+  # From Concierge to specialists
+  - from: UtilitiesConcierge
+    to: BillingAgent
+    tool: handoff_billing_agent
+    type: announced
+    share_context: true
+
+  - from: UtilitiesConcierge
+    to: OutageAgent
+    tool: handoff_outage_agent
+    type: discrete  # Urgent - no greeting delay
+    share_context: true
+
+  - from: UtilitiesConcierge
+    to: ServiceAgent
+    tool: handoff_service_agent
+    type: announced
+    share_context: true
+
+  - from: UtilitiesConcierge
+    to: UsageAgent
+    tool: handoff_usage_agent
+    type: announced
+    share_context: true
+
+  # Return to concierge
+  - from: BillingAgent
+    to: UtilitiesConcierge
+    tool: handoff_concierge
+    type: announced
+    share_context: true
+
+  - from: OutageAgent
+    to: UtilitiesConcierge
+    tool: handoff_concierge
+    type: announced
+    share_context: true
+
+  - from: ServiceAgent
+    to: UtilitiesConcierge
+    tool: handoff_concierge
+    type: announced
+    share_context: true
+
+  - from: UsageAgent
+    to: UtilitiesConcierge
+    tool: handoff_concierge
+    type: announced
+    share_context: true
+
+# Generic handoff for dynamic routing
+generic_handoff:
+  enabled: true
+  default_type: announced
+  share_context: true
+  require_client_id: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Omnichannel Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+omnichannel:
+  enabled: true
+  
+  channels:
+    - voice
+    - whatsapp
+    - webchat
+  
+  triggers:
+    high_volume:
+      enabled: true
+      queue_depth_threshold: 30      # Utilities often have high call volume
+      wait_time_threshold_seconds: 90
+    
+    document_needed:
+      enabled: true
+      offer_channel: whatsapp
+      use_cases:
+        - photo_of_meter
+        - proof_of_residence
+        - bill_upload
+    
+    outage_mass_event:
+      enabled: true
+      # During mass outages, proactively offer digital channels
+      auto_offer_alternative: true
+      message: "We're experiencing high call volume due to outages in your area. Would you like to continue on WhatsApp for faster updates?"
+
+  context:
+    persist_to_cosmos: true
+    session_timeout_minutes: 120  # Longer for utilities (outage tracking)
+    preserve_fields:
+      - customer_id
+      - account_number
+      - service_address
+      - outage_ticket_id
+      - payment_arrangement_id
+      - conversation_summary
+
+  messages:
+    voice_to_whatsapp: |
+      Hi! I'm continuing our conversation from your call to {utility_name}.
+      Account: ***{account_last4}
+      
+      {conversation_summary}
+      
+      How can I help you further?
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Utilities-Specific Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+utilities_config:
+  utility_name: "PowerGrid Energy"  # Configurable per deployment
+  service_types:
+    - electric
+    - gas
+    - water
+  
+  # Outage integration
+  outage_system:
+    enabled: true
+    check_interval_seconds: 300
+    auto_credit_threshold_hours: 4  # Auto-credit after 4 hours of outage
+  
+  # Payment options
+  payment_methods:
+    - bank_account
+    - credit_card
+    - debit_card
+    - payment_center
+    - budget_billing
+  
+  # Service territory
+  service_areas:
+    - region: northeast
+      states: [NY, NJ, PA, CT, MA]
+    - region: southeast
+      states: [FL, GA, NC, SC, VA]
+
+# Agent defaults
+agent_defaults:
+  additional_tools:
+    - check_queue_status
+    - offer_channel_switch
+    - execute_channel_handoff
+    - get_account_info
+    - verify_customer_identity

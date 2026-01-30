@@ -22,6 +22,7 @@ scenario.yaml
 |:---------|:------|:------|:-------|
 | [**Banking**](banking.md) | BankingConcierge | Service-first | Cards, Investments |
 | [**Insurance**](insurance.md) | AuthAgent | Security-first | Policy, FNOL, Subro |
+| [**Utilities**](utilities.md) | UtilitiesConcierge | Omnichannel | Billing, Outage, Service, Usage |
 
 ---
 
@@ -58,6 +59,26 @@ scenario.yaml
         ◄──────────►          (B2B)
     
     B2C: ANNOUNCED | B2B: DISCRETE
+    ```
+
+=== "Utilities: Omnichannel"
+
+    ```
+              ┌────────────────────┐
+              │ UtilitiesConcierge │ ← Entry
+              └─────────┬──────────┘
+                        │
+          ┌─────────┬───┴───┬─────────┐
+          ▼         ▼       ▼         ▼
+    ┌─────────┐ ┌───────┐ ┌───────┐ ┌───────┐
+    │ Billing │ │Outage │ │Service│ │ Usage │
+    └─────────┘ └───────┘ └───────┘ └───────┘
+                    │
+              [DISCRETE]
+           (Safety-first)
+    
+    Outage: DISCRETE | Others: ANNOUNCED
+    📱 Omnichannel: Voice → WhatsApp → WebChat
     ```
 
 ---

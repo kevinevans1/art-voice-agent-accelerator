@@ -115,7 +115,16 @@
 | **[Speech](speech/README.md)** | Modes, Recognition, Synthesis | Audio streaming, STT/TTS integration, handler selection |
 | **[Data](data/README.md)** | Session, Flows | MemoManager, Redis patterns, state persistence |
 | **[ACS](acs/README.md)** | Call Flows, Integrations | ACS media handling, telephony integration, IVR bridging |
+| **[Omnichannel](omnichannel-handoff/README.md)** | Channel Handoff | Voice→WhatsApp→WebChat, context preservation |
 | **[Telemetry](telemetry.md)** | Observability | OpenTelemetry, App Insights, SLOs and alerting |
+
+## :material-factory: Industry Scenarios
+
+| Scenario | Description | Agents |
+|----------|-------------|--------|
+| **[Banking](../industry/banking.md)** | Hub-spoke, service-first | Concierge, Cards, Investments |
+| **[Insurance](../industry/insurance.md)** | Security-gate pattern | Auth, Policy, FNOL, Subro |
+| **[Utilities](../industry/utilities.md)** | Omnichannel, safety-first | Concierge, Billing, Outage, Service, Usage |
 
 ## :material-rocket: Quick Start Paths
 

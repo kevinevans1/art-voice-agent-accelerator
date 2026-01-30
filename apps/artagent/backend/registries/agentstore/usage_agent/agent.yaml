@@ -1,0 +1,85 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Usage Agent - Utilities
+# ═══════════════════════════════════════════════════════════════════════════════
+# Analyzes energy usage, provides efficiency tips, explains meter reads.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: UsageAgent
+description: Usage analyst - consumption patterns, efficiency tips, meter questions
+
+handoff:
+  trigger: handoff_usage_agent
+
+greeting: |
+  {% if customer_name %}Hi {{ customer_name }}, I can help you understand your energy usage and find ways to save. What would you like to know?
+  {% else %}Hi, I'm here to help with usage questions. Are you wondering why your usage is high, or looking for ways to save?
+  {% endif %}
+
+return_greeting: |
+  Is there anything else about your usage or savings I can help with?
+
+voice:
+  name: en-US-AvaMultilingualNeural
+  type: azure-standard
+  rate: "-4%"
+
+voicelive_model:
+  deployment_id: gpt-realtime
+  temperature: 0.7
+  max_tokens: 2048
+
+cascade_model:
+  deployment_id: gpt-4o
+  temperature: 0.7
+  max_tokens: 2048
+
+session:
+  modalities: [TEXT, AUDIO]
+  input_audio_format: PCM16
+  output_audio_format: PCM16
+  turn_detection:
+    type: azure_semantic_vad
+    threshold: 0.5
+    silence_duration_ms: 720
+  tool_choice: auto
+
+tools:
+  # Usage Analysis
+  - get_usage_history
+  - get_usage_comparison
+  - get_usage_breakdown
+  - compare_to_neighbors
+  
+  # Meter
+  - get_meter_info
+  - submit_meter_read
+  - request_meter_test
+  - explain_meter_reading
+  
+  # Savings
+  - get_efficiency_tips
+  - calculate_appliance_cost
+  - get_rebate_programs
+  - schedule_energy_audit
+  
+  # Programs
+  - enroll_time_of_use
+  - enroll_demand_response
+  - check_solar_eligibility
+  
+  # Account
+  - get_account_info
+  - get_rate_schedule
+  
+  # Handoffs
+  - handoff_concierge
+  - handoff_billing_agent
+  - escalate_human
+  
+  # Omnichannel
+  - check_queue_status
+  - offer_channel_switch
+  - execute_channel_handoff
+
+prompts:
+  path: prompt.jinja

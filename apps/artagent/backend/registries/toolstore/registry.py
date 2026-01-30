@@ -254,6 +254,11 @@ def initialize_tools() -> int:
         ("insurance.fnol", lambda: __import__("apps.artagent.backend.registries.toolstore.insurance.fnol", fromlist=[""])),
         ("insurance.policy", lambda: __import__("apps.artagent.backend.registries.toolstore.insurance.policy", fromlist=[""])),
         ("insurance.subro", lambda: __import__("apps.artagent.backend.registries.toolstore.insurance.subro", fromlist=[""])),
+        # Omnichannel tools
+        ("channel_handoff", lambda: __import__("apps.artagent.backend.registries.toolstore.channel_handoff", fromlist=[""])),
+        # Utilities tools
+        ("utilities.utilities", lambda: __import__("apps.artagent.backend.registries.toolstore.utilities.utilities", fromlist=[""])),
+        ("utilities.handoffs", lambda: __import__("apps.artagent.backend.registries.toolstore.utilities.handoffs", fromlist=[""])),
     ]
     
     failed_modules = []

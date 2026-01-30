@@ -1,0 +1,169 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Omnichannel Scenario - Multi-Agent Orchestration
+# ═══════════════════════════════════════════════════════════════════════════════
+# Demonstrates seamless handoff between Voice, WhatsApp, and WebChat channels.
+# Customer context is preserved across all channels so they don't need to repeat.
+#
+# Multi-Agent Architecture:
+#   - ChannelRouter: Meta-agent for channel optimization (runs in parallel)
+#   - Concierge: Primary customer-facing agent
+#   - Specialists: Domain-specific agents (Auth, Fraud, KB)
+#
+# Use Cases:
+#   - High call volume: Offer WhatsApp/WebChat to reduce queue times
+#   - Document sharing: Switch to WhatsApp for image/file uploads
+#   - Customer preference: Some customers prefer text-based communication
+#   - Async follow-up: Complex issues that need research time
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: omnichannel
+description: Multi-channel customer service with seamless voice-to-messaging handoffs and intelligent routing
+icon: "📱"
+
+# Starting agent
+start_agent: Concierge
+
+# Agents included in this scenario
+agents:
+  - Concierge
+  - AuthAgent
+  - GeneralKBAgent
+  - FraudAgent
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-Agent Orchestration
+# ─────────────────────────────────────────────────────────────────────────────
+orchestration:
+  # Supervisor agents run in parallel and advise active agents
+  supervisors:
+    - agent: ChannelRouter
+      mode: advisory           # Doesn't interact directly with customer
+      trigger: continuous      # Monitors throughout conversation
+      can_interrupt: false     # Only advises, doesn't take control
+      
+  # Parallel execution for complex scenarios
+  parallel_execution:
+    enabled: true
+    max_concurrent_agents: 3
+    use_cases:
+      - fraud_investigation    # FraudAgent + NotificationAgent in parallel
+      - document_processing    # ProcessingAgent + VerificationAgent in parallel
+
+# Default handoff behavior
+handoff_type: announced
+
+# Agent-to-agent handoffs
+handoffs:
+  - from: Concierge
+    to: AuthAgent
+    tool: handoff_to_agent
+    type: announced
+    share_context: true
+
+  - from: Concierge
+    to: GeneralKBAgent
+    tool: handoff_to_agent
+    type: announced
+    share_context: true
+
+  - from: Concierge
+    to: FraudAgent
+    tool: handoff_to_agent
+    type: announced
+    share_context: true
+
+  - from: AuthAgent
+    to: FraudAgent
+    tool: handoff_to_agent
+    type: announced
+    share_context: true
+
+  - from: AuthAgent
+    to: Concierge
+    tool: handoff_concierge
+    type: announced
+    share_context: true
+
+  - from: FraudAgent
+    to: Concierge
+    tool: handoff_concierge
+    type: announced
+    share_context: true
+
+# Generic handoff configuration
+generic_handoff:
+  enabled: true
+  default_type: announced
+  share_context: true
+  require_client_id: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Omnichannel Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+omnichannel:
+  enabled: true
+  
+  # Available channels
+  channels:
+    - voice    # Primary channel (ACS calls)
+    - whatsapp # WhatsApp via ACS
+    - webchat  # Web chat via WebSocket
+  
+  # Channel switch triggers
+  triggers:
+    high_volume:
+      enabled: true
+      queue_depth_threshold: 50        # Offer switch if more than N calls waiting
+      wait_time_threshold_seconds: 120 # Offer switch if wait > N seconds
+    
+    document_needed:
+      enabled: true
+      offer_channel: whatsapp          # Best for sharing documents/images
+    
+    customer_request:
+      enabled: true
+      allow_any_channel: true          # Customer can choose
+    
+    complex_issue:
+      enabled: true
+      offer_channel: either            # Let customer choose
+      async_followup: true             # Agent can respond when ready
+
+  # Context preservation settings
+  context:
+    persist_to_cosmos: true            # Save context for cross-channel continuity
+    session_timeout_minutes: 60        # Context expires after 60 min of inactivity
+    preserve_fields:                   # Fields to preserve across channels
+      - customer_id
+      - customer_name
+      - account_verified
+      - conversation_summary
+      - issue_type
+      - priority
+      - collected_data
+
+  # Handoff message templates
+  messages:
+    voice_to_whatsapp: |
+      Hi! I'm continuing our conversation from the phone call.
+      Here's what we discussed: {conversation_summary}
+      
+      How can I help you further?
+    
+    voice_to_webchat: |
+      Welcome back! I have your conversation details from the phone call.
+      Summary: {conversation_summary}
+      
+      What would you like to do next?
+    
+    end_call_default: |
+      I've sent you a message on {target_channel}. You can continue there at your convenience.
+      Thank you for calling!
+
+# Agent defaults for omnichannel
+agent_defaults:
+  # All agents get channel handoff tools in this scenario
+  additional_tools:
+    - check_queue_status
+    - offer_channel_switch
+    - execute_channel_handoff

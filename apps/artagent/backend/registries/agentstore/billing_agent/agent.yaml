@@ -1,0 +1,82 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Billing Agent - Utilities
+# ═══════════════════════════════════════════════════════════════════════════════
+# Handles billing inquiries, disputes, payment arrangements, and account credits.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: BillingAgent
+description: Billing specialist - payment plans, disputes, credits, bill explanations
+
+handoff:
+  trigger: handoff_billing_agent
+
+greeting: |
+  {% if customer_name %}Hi {{ customer_name }}, I'm your billing specialist. I can see your account and I'm ready to help with your billing question.
+  {% else %}Hi, I'm your billing specialist. Let me help you with your billing question.
+  {% endif %}
+
+return_greeting: |
+  Is there anything else about your bill or payments I can help with?
+
+voice:
+  name: en-US-AvaMultilingualNeural
+  type: azure-standard
+  rate: "-4%"
+
+voicelive_model:
+  deployment_id: gpt-realtime
+  temperature: 0.6
+  max_tokens: 2048
+
+cascade_model:
+  deployment_id: gpt-4o
+  temperature: 0.6
+  max_tokens: 2048
+
+session:
+  modalities: [TEXT, AUDIO]
+  input_audio_format: PCM16
+  output_audio_format: PCM16
+  turn_detection:
+    type: azure_semantic_vad
+    threshold: 0.5
+    silence_duration_ms: 720
+  tool_choice: auto
+
+tools:
+  # Billing Operations
+  - get_current_bill
+  - get_bill_history
+  - get_bill_breakdown
+  - explain_charges
+  
+  # Payments
+  - get_payment_history
+  - process_payment
+  - setup_autopay
+  - setup_payment_plan
+  
+  # Credits & Adjustments
+  - apply_credit
+  - request_bill_review
+  - check_eligible_credits
+  
+  # Account
+  - get_account_info
+  - update_billing_address
+  
+  # Programs
+  - check_assistance_programs
+  - enroll_budget_billing
+  
+  # Handoffs
+  - handoff_concierge
+  - escalate_human
+  
+  # Omnichannel
+  - check_queue_status
+  - offer_channel_switch
+  - execute_channel_handoff
+
+prompts:
+  path: prompt.jinja

@@ -1,0 +1,84 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Service Agent - Utilities
+# ═══════════════════════════════════════════════════════════════════════════════
+# Handles service changes: new service, transfers, disconnections, upgrades.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: ServiceAgent
+description: Service specialist - new connections, transfers, disconnections
+
+handoff:
+  trigger: handoff_service_agent
+
+greeting: |
+  {% if customer_name %}Hi {{ customer_name }}, I can help you with your service request. Are you moving, or is this for a new connection?
+  {% else %}Hi, I'm here to help with service changes. Tell me what you need - moving, new service, or something else?
+  {% endif %}
+
+return_greeting: |
+  Is there anything else about your service I can help with?
+
+voice:
+  name: en-US-AvaMultilingualNeural
+  type: azure-standard
+  rate: "-4%"
+
+voicelive_model:
+  deployment_id: gpt-realtime
+  temperature: 0.6
+  max_tokens: 2048
+
+cascade_model:
+  deployment_id: gpt-4o
+  temperature: 0.6
+  max_tokens: 2048
+
+session:
+  modalities: [TEXT, AUDIO]
+  input_audio_format: PCM16
+  output_audio_format: PCM16
+  turn_detection:
+    type: azure_semantic_vad
+    threshold: 0.5
+    silence_duration_ms: 720
+  tool_choice: auto
+
+tools:
+  # Service Operations
+  - start_new_service
+  - transfer_service
+  - stop_service
+  - schedule_meter_read
+  
+  # Appointments
+  - check_available_dates
+  - schedule_appointment
+  - reschedule_appointment
+  - cancel_appointment
+  
+  # Verification
+  - verify_service_address
+  - check_service_availability
+  - get_deposit_requirement
+  
+  # Account
+  - get_account_info
+  - update_contact_info
+  - add_authorized_user
+  
+  # Programs
+  - enroll_paperless
+  - enroll_autopay
+  
+  # Handoffs
+  - handoff_concierge
+  - handoff_billing_agent
+  - escalate_human
+  
+  # Omnichannel
+  - check_queue_status
+  - offer_channel_switch
+  - execute_channel_handoff
+
+prompts:
+  path: prompt.jinja

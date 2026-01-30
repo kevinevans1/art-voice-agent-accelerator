@@ -1,0 +1,108 @@
+# Azure AI Foundry Project Configuration
+# ========================================
+# Unified project hosting all agents and models for electric & natural gas utility
+
+foundry:
+  project_name: "powergas-voice-agent"
+  resource_group: "${AZURE_RESOURCE_GROUP}"
+  location: "${AZURE_LOCATION}"
+  description: "Electric and natural gas utility customer service"
+  
+  # Central model deployments (shared across all agents)
+  models:
+    primary:
+      name: "gpt-4o"
+      version: "2024-08-06"
+      capacity: 100  # TPM in thousands
+      
+    fallback:
+      name: "gpt-4o-mini"
+      version: "2024-07-18"
+      capacity: 200
+
+  # All agents deployed under single Foundry project
+  agents:
+    # Primary router
+    utilities_concierge:
+      model: primary
+      description: "Primary concierge for electric and gas inquiries"
+      tools:
+        - get_account_info
+        - check_queue_status
+        - handoff_billing_agent
+        - handoff_outage_agent
+        - handoff_service_agent
+        - handoff_usage_agent
+        - offer_channel_switch
+        - execute_channel_handoff
+        
+    # Billing specialist
+    billing_agent:
+      model: primary
+      description: "Payment plans, disputes, credits"
+      tools:
+        - get_current_bill
+        - get_bill_breakdown
+        - process_payment
+        - setup_payment_plan
+        - apply_credit
+        
+    # Outage specialist (urgent)
+    outage_agent:
+      model: primary
+      description: "Power outages, gas leaks, service interruptions"
+      tools:
+        - check_outage_status
+        - report_outage
+        - report_downed_wire
+        - get_restoration_estimate
+        - send_outage_notification
+        
+    # Service lifecycle
+    service_agent:
+      model: primary
+      description: "New service, transfers, disconnections"
+      tools:
+        - transfer_service
+        - start_new_service
+        - stop_service
+        - schedule_service_appointment
+        
+    # Usage analysis
+    usage_agent:
+      model: primary
+      description: "Consumption analysis, efficiency tips"
+      tools:
+        - get_usage_history
+        - get_efficiency_tips
+        - compare_usage_periods
+        - analyze_rate_plans
+
+    # Supervisor (optional multi-agent)
+    channel_router:
+      model: fallback  # Lighter weight for routing decisions
+      description: "Multi-channel supervisor for workload distribution"
+      is_supervisor: true
+
+  # Shared knowledge base
+  knowledge_base:
+    indexes:
+      - name: "utility-policies"
+        description: "Electric and gas rate plans, billing policies, service terms"
+      - name: "outage-procedures"
+        description: "Electric outage and gas emergency protocols, restoration timelines"
+      - name: "energy-efficiency"
+        description: "Electric and gas conservation tips, rebate programs, home efficiency"
+
+  # Evaluation configuration
+  evaluations:
+    metrics:
+      - groundedness
+      - relevance
+      - coherence
+      - fluency
+      - helpfulness
+    datasets:
+      - "utilities-qa-golden"
+      - "billing-scenarios"
+      - "outage-scenarios"

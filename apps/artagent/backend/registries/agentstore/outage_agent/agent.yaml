@@ -1,0 +1,80 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Outage Agent - Utilities
+# ═══════════════════════════════════════════════════════════════════════════════
+# Handles power outages, gas leaks, and service restoration.
+# Priority agent - outages are urgent!
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: OutageAgent
+description: Outage specialist - report outages, check status, restoration updates
+
+handoff:
+  trigger: handoff_outage_agent
+
+# Discrete handoff - no greeting delay for urgent outage reports
+greeting: |
+  {% if active_outage %}I can see there's an outage affecting your area. Let me give you the latest status.
+  {% else %}I'm here to help with your outage. Is your power out right now?
+  {% endif %}
+
+return_greeting: |
+  Is there anything else about the outage I can help with?
+
+voice:
+  name: en-US-AvaMultilingualNeural
+  type: azure-standard
+  rate: "0%"  # Normal speed for urgent info
+
+voicelive_model:
+  deployment_id: gpt-realtime
+  temperature: 0.5  # More factual for outage info
+  max_tokens: 2048
+
+cascade_model:
+  deployment_id: gpt-4o
+  temperature: 0.5
+  max_tokens: 2048
+
+session:
+  modalities: [TEXT, AUDIO]
+  input_audio_format: PCM16
+  output_audio_format: PCM16
+  turn_detection:
+    type: azure_semantic_vad
+    threshold: 0.5
+    silence_duration_ms: 600  # Faster response for urgent calls
+  tool_choice: auto
+
+tools:
+  # Outage Operations
+  - check_outage_status
+  - report_outage
+  - get_restoration_eta
+  - get_outage_map
+  - subscribe_outage_updates
+  
+  # Safety
+  - report_downed_wire
+  - report_gas_leak
+  - get_emergency_contacts
+  
+  # Account
+  - get_account_info
+  - get_service_address
+  
+  # Credits
+  - check_outage_credits
+  - request_outage_credit
+  
+  # Handoffs
+  - handoff_concierge
+  - handoff_billing_agent  # For outage credits
+  - escalate_human
+  
+  # Omnichannel
+  - check_queue_status
+  - offer_channel_switch
+  - execute_channel_handoff
+
+prompts:
+  path: prompt.jinja

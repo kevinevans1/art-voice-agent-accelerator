@@ -144,6 +144,11 @@ tools:
   - handoff_card_recommendation        # Credit card recommendations
   - handoff_investment_advisor         # Investment & retirement
 
+  # Omnichannel - Channel Switch (high volume handling)
+  - check_queue_status                 # Check if wait times are high
+  - offer_channel_switch               # Offer WhatsApp/WebChat alternative
+  - execute_channel_handoff            # Execute the channel switch
+
   # Escalation
   - escalate_human
   - escalate_emergency

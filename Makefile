@@ -16,6 +16,35 @@ SCRIPTS_DIR = devops/scripts/local-dev
 SCRIPTS_LOAD_DIR = tests/load
 PHONE = 
 
+############################################################
+# Preflight Checks
+# Purpose: Validate environment before deployment
+############################################################
+
+# Run preflight checks (validates CLI, Azure, providers, etc.)
+preflight:
+	@echo "🚀 Running Preflight Checks"
+	@echo "==========================="
+	@bash devops/scripts/preflight-check.sh
+
+# Run preflight with auto-fix enabled
+preflight_fix:
+	@echo "🔧 Running Preflight Checks with Auto-Fix"
+	@echo "=========================================="
+	@bash devops/scripts/preflight-check.sh --fix
+
+# Run preflight with verbose output
+preflight_verbose:
+	@echo "🔍 Running Preflight Checks (Verbose)"
+	@echo "====================================="
+	@bash devops/scripts/preflight-check.sh --verbose
+
+# Run preflight with JSON output
+preflight_json:
+	@bash devops/scripts/preflight-check.sh --json
+
+.PHONY: preflight preflight_fix preflight_verbose preflight_json
+
 
 # Install pre-commit and pre-push git hooks
 set_up_precommit_and_prepush:

@@ -31,8 +31,9 @@ Key Files:
 - Both use the same MediaHandler with different transport modes
 - agent_builder.py: REST API for creating dynamic agents at runtime
 - scenario_builder.py: REST API for creating dynamic scenarios at runtime
+- channels.py: Omnichannel endpoints for WhatsApp, WebChat, and handoffs
 """
 
-from . import agent_builder, browser, calls, health, media, scenario_builder, sessions
+from . import agent_builder, browser, calls, channels, health, media, scenario_builder, sessions
 
-__all__ = ["health", "calls", "media", "browser", "agent_builder", "scenario_builder", "sessions"]
+__all__ = ["health", "calls", "media", "browser", "agent_builder", "scenario_builder", "sessions", "channels"]
