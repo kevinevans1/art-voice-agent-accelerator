@@ -283,5 +283,43 @@ variable "stt_pool_size" {
     condition     = var.stt_pool_size >= 10 && var.stt_pool_size <= 500
     error_message = "STT pool size must be between 10 and 500."
   }
+}
 
+# ============================================================================
+# WHATSAPP / OMNICHANNEL CONFIGURATION
+# ============================================================================
+
+variable "enable_whatsapp" {
+  description = "Enable WhatsApp channel integration via ACS Advanced Messaging"
+  type        = bool
+  default     = false
+}
+
+variable "whatsapp_channel_id" {
+  description = "ACS WhatsApp channel registration ID (from Azure Portal after connecting WhatsApp Business Account)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "enable_webchat_demo" {
+  description = "Enable WebChat Demo container app for omnichannel demonstrations"
+  type        = bool
+  default     = false
+}
+
+# ============================================================================
+# OBSERVABILITY / TRACING CONFIGURATION
+# ============================================================================
+
+variable "enable_tracing" {
+  description = "Enable OpenTelemetry tracing for AI agents (traces appear in Application Insights and AI Foundry)"
+  type        = bool
+  default     = true
+}
+
+variable "enable_genai_content_recording" {
+  description = "Enable recording of GenAI prompts and completions in traces (useful for debugging, disable for PII concerns)"
+  type        = bool
+  default     = false
 }

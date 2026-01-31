@@ -208,6 +208,51 @@ utilities_config:
     - region: southeast
       states: [FL, GA, NC, SC, VA]
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Observability & Tracing (Azure AI Foundry Integration)
+# ─────────────────────────────────────────────────────────────────────────────
+observability:
+  enabled: true
+  
+  # Azure AI Foundry Tracing
+  # Traces appear in AI Foundry Portal > Tracing tab
+  ai_foundry_tracing:
+    enabled: true
+    # Capture prompts and completions for debugging (disable in prod for PII)
+    content_recording: true
+    # GenAI semantic conventions for agent tracking
+    emit_invoke_agent_spans: true
+  
+  # Application Insights Integration
+  application_insights:
+    enabled: true
+    # Custom dimensions for utilities scenario
+    custom_dimensions:
+      scenario: utilities
+      industry: utilities
+      demo_mode: true
+  
+  # Metrics to capture per agent
+  agent_metrics:
+    - token_usage           # Input/output tokens per agent
+    - turn_count            # Number of conversation turns
+    - handoff_count         # Agent switches
+    - tool_call_count       # Tool invocations
+    - latency_ttft          # Time to first token
+    - session_duration      # Total agent session time
+
+  # Span naming convention (shows in App Insights)
+  span_naming:
+    pattern: "invoke_agent {agent_name}"
+    attributes:
+      - gen_ai.operation.name
+      - gen_ai.agent.name
+      - gen_ai.provider.name
+      - gen_ai.usage.input_tokens
+      - gen_ai.usage.output_tokens
+      - session.id
+      - call.connection_id
+
 # Agent defaults
 agent_defaults:
   additional_tools:

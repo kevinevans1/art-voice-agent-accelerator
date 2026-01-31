@@ -113,6 +113,7 @@ nav:
       - Overview: testing/model-evaluation.md
       - Evaluation Framework: testing/evaluation.md
     - Load Testing: operations/load-testing.md
+    - Deployment Verification: testing/deployment-verification.md
   - Operations:
     - Monitoring: operations/monitoring.md
     - Troubleshooting: operations/troubleshooting.md
@@ -128,6 +129,8 @@ nav:
     - Healthcare: industry/healthcare.md
   - Omnichannel:
     - Architecture: architecture/omnichannel-handoff/README.md
+    - WhatsApp Integration: guides/whatsapp-integration.md
+    - Demo Script: guides/omnichannel-demo-script.md
   - Guides:
     - Repository Structure: guides/repository-structure.md
     - Utilities & Services: guides/utilities.md

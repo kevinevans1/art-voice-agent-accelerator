@@ -305,8 +305,8 @@ check_azure_auth() {
     
     # Azure CLI login
     print_section "Azure CLI"
-    if timeout 15 az account show &> /dev/null; then
-        ACCOUNT_NAME=$(timeout 10 az account show --query 'name' -o tsv 2>/dev/null || echo "Unknown")
+    if timeout 30 az account show &> /dev/null; then
+        ACCOUNT_NAME=$(timeout 15 az account show --query 'name' -o tsv 2>/dev/null || echo "Unknown")
         pass "Logged in to Azure CLI"
         info "Subscription: $ACCOUNT_NAME"
     else
@@ -363,8 +363,8 @@ check_resource_providers() {
     echo "  Checking critical providers..."
     
     for provider in "${CRITICAL_PROVIDERS[@]}"; do
-        # Use timeout to prevent hanging
-        STATE=$(timeout 10 az provider show --namespace "$provider" --query 'registrationState' -o tsv 2>/dev/null || echo "Timeout")
+        # Use timeout to prevent hanging (increased from 10s to 20s for slow networks)
+        STATE=$(timeout 20 az provider show --namespace "$provider" --query 'registrationState' -o tsv 2>/dev/null || echo "Timeout")
         
         if [[ "$STATE" == "Registered" ]]; then
             pass "$provider"
@@ -635,6 +635,8 @@ check_project_structure() {
         "apps/artagent/backend/registries/agentstore/utilities_concierge/agent.yaml"
         "apps/artagent/backend/registries/agentstore/billing_agent/agent.yaml"
         "apps/artagent/backend/registries/agentstore/outage_agent/agent.yaml"
+        "apps/artagent/backend/registries/agentstore/service_agent/agent.yaml"
+        "apps/artagent/backend/registries/agentstore/usage_agent/agent.yaml"
         "apps/artagent/backend/registries/toolstore/utilities/utilities.py"
         "apps/artagent/backend/channels/__init__.py"
     )

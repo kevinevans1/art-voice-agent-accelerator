@@ -25,7 +25,7 @@ PHONE =
 preflight:
 	@echo "🚀 Running Preflight Checks"
 	@echo "==========================="
-	@bash devops/scripts/preflight-check.sh
+	@bash devops/scripts/preflight-check.sh --quick
 
 # Run preflight with auto-fix enabled
 preflight_fix:
@@ -44,6 +44,54 @@ preflight_json:
 	@bash devops/scripts/preflight-check.sh --json
 
 .PHONY: preflight preflight_fix preflight_verbose preflight_json
+
+############################################################
+# Deployment
+# Purpose: Deploy the solution to Azure
+############################################################
+
+# Full deployment with interactive prompts
+deploy:
+	@echo "🚀 Starting Deployment"
+	@echo "======================"
+	@bash devops/scripts/deploy.sh
+
+# Quick deployment (skip preflight, use defaults)
+deploy_quick:
+	@echo "⚡ Quick Deployment"
+	@echo "==================="
+	@bash devops/scripts/deploy.sh --skip-preflight -y
+
+# Deploy to specific environment
+deploy_env:
+	@echo "🎯 Deploy to Environment: $(ENV)"
+	@bash devops/scripts/deploy.sh --env $(ENV) --location $(LOCATION)
+
+# Provision infrastructure only
+provision:
+	@echo "🏗️ Provisioning Infrastructure"
+	@echo "==============================="
+	@bash devops/scripts/deploy.sh --provision-only
+
+# Deploy applications only (infrastructure must exist)
+deploy_apps:
+	@echo "📦 Deploying Applications"
+	@echo "========================="
+	@bash devops/scripts/deploy.sh --deploy-only
+
+# Teardown deployment
+destroy:
+	@echo "💥 Tearing Down Deployment"
+	@echo "=========================="
+	@bash devops/scripts/deploy.sh --destroy
+
+# Teardown with force (no prompts)
+destroy_force:
+	@echo "💥 Force Teardown"
+	@echo "================="
+	@bash devops/scripts/deploy.sh --destroy -y
+
+.PHONY: deploy deploy_quick deploy_env provision deploy_apps destroy destroy_force
 
 
 # Install pre-commit and pre-push git hooks

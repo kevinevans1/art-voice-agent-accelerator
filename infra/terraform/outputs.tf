@@ -269,3 +269,17 @@ output "AZURE_APPCONFIG_LABEL" {
   description = "Environment label used in App Configuration"
   value       = module.appconfig.label
 }
+
+# ============================================================================
+# OBSERVABILITY / TRACING
+# ============================================================================
+
+output "ENABLE_TRACING" {
+  description = "Whether OpenTelemetry tracing is enabled for AI agents"
+  value       = var.enable_tracing
+}
+
+output "ENABLE_GENAI_CONTENT_RECORDING" {
+  description = "Whether GenAI prompts/completions are recorded in traces"
+  value       = var.enable_genai_content_recording
+}

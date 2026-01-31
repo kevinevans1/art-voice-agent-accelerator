@@ -28,6 +28,16 @@ services:
       platform: linux/amd64
       remoteBuild: true
 
+  webchat-demo:
+    project: apps/webchat-demo
+    host: containerapp
+    language: js
+    docker:
+      path: ./Dockerfile
+      context: .
+      platform: linux/amd64
+      remoteBuild: true
+
 
 hooks:
   preprovision:

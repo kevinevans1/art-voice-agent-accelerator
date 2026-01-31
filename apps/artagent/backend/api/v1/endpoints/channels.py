@@ -155,6 +155,111 @@ async def whatsapp_webhook(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def process_webchat_message(
+    content: str,
+    customer_id: str,
+    context: Any,
+) -> tuple[str, str]:
+    """
+    Process a webchat message with context awareness.
+    
+    For the demo, this provides intelligent responses based on
+    the customer's conversation history from voice calls.
+    
+    In production, this would route to the full agent framework.
+    
+    Args:
+        content: User's message
+        customer_id: Customer identifier
+        context: CustomerContext with conversation history
+        
+    Returns:
+        Tuple of (response_text, agent_name)
+    """
+    content_lower = content.lower()
+    agent_name = "Utilities Support"
+    
+    # Check if we have context from a previous voice call
+    has_voice_context = bool(context.conversation_summary)
+    collected = context.collected_data or {}
+    
+    # Context-aware responses based on collected data
+    if has_voice_context:
+        # Check for outage-related queries
+        if any(word in content_lower for word in ["outage", "power", "electricity", "crew", "eta", "status", "update"]):
+            address = collected.get("service_address", collected.get("address", "your location"))
+            eta = collected.get("outage_eta", collected.get("eta", "within the next few hours"))
+            return (
+                f"Based on your recent call, I can see you reported an outage at {address}. "
+                f"Current status: Crew is en route with an estimated arrival of {eta}. "
+                f"Would you like me to send you a text when power is restored?",
+                "Outage Agent"
+            )
+        
+        # Check for billing queries
+        if any(word in content_lower for word in ["bill", "payment", "balance", "pay", "amount", "due"]):
+            account = collected.get("account_number", "your account")
+            verified = collected.get("account_verified", False)
+            if verified:
+                return (
+                    f"I see from your call that your account is already verified. "
+                    f"Your current balance is $127.45 due on February 15th. "
+                    f"Would you like to make a payment or set up auto-pay?",
+                    "Billing Agent"
+                )
+            else:
+                return (
+                    "I have your information from the call. Let me pull up your billing details. "
+                    "Your current balance is $127.45. Would you like to make a payment?",
+                    "Billing Agent"
+                )
+        
+        # General follow-up from voice call
+        if any(word in content_lower for word in ["call", "earlier", "before", "continue", "talked"]):
+            return (
+                f"Yes, I have the details from your recent call! {context.conversation_summary} "
+                f"How can I help you further with this?",
+                agent_name
+            )
+        
+        # Default with context awareness
+        return (
+            f"I see you recently contacted us. Based on that conversation, I'm here to help. "
+            f"What would you like assistance with?",
+            agent_name
+        )
+    
+    # No previous context - standard responses
+    if any(word in content_lower for word in ["outage", "power", "electricity"]):
+        return (
+            "I can help you with power outage information. "
+            "Could you please provide your service address so I can check the status?",
+            "Outage Agent"
+        )
+    
+    if any(word in content_lower for word in ["bill", "payment", "balance"]):
+        return (
+            "I can help with billing inquiries. "
+            "Could you provide your account number or the phone number on your account?",
+            "Billing Agent"
+        )
+    
+    if any(word in content_lower for word in ["hello", "hi", "hey"]):
+        return (
+            "Hello! Welcome to PowerGas Utilities support. "
+            "I can help with billing, outages, service requests, or usage questions. "
+            "What can I assist you with today?",
+            agent_name
+        )
+    
+    # Default response
+    return (
+        f"Thank you for your message. I'm here to help with billing, outages, "
+        f"service requests, or usage questions. What can I assist you with?",
+        agent_name
+    )
+
+
 async def process_whatsapp_message(data: dict[str, Any]) -> None:
     """Process an incoming WhatsApp message."""
     adapter = await get_whatsapp_adapter()
@@ -219,11 +324,12 @@ async def webchat_websocket(websocket: WebSocket, customer_id: str):
 
         # Check if this is a handoff (context exists with conversation)
         if context.conversation_summary:
-            # Send handoff context
+            # Send handoff context with collected data
             await websocket.send_json({
                 "type": "handoff",
-                "source_channel": context.sessions[-1].channel if context.sessions else "unknown",
+                "source_channel": context.sessions[-1].channel if context.sessions else "voice",
                 "context_summary": context.conversation_summary,
+                "collected_data": context.collected_data,
                 "message": "Welcome! I have your conversation history - no need to repeat yourself.",
                 "timestamp": datetime.now(UTC).isoformat(),
             })
@@ -249,14 +355,17 @@ async def webchat_websocket(websocket: WebSocket, customer_id: str):
                 if data.get("type") == "message":
                     content = data.get("content", "")
 
-                    # TODO: Route to Foundry agent for processing
-                    # For now, echo with agent simulation
-                    response = f"I received your message: '{content[:50]}'. How can I help further?"
+                    # Process with context-aware response
+                    response, agent_name = await process_webchat_message(
+                        content=content,
+                        customer_id=customer_id,
+                        context=context,
+                    )
 
                     await websocket.send_json({
                         "type": "message",
                         "content": response,
-                        "agent": "Concierge",
+                        "agent": agent_name,
                         "timestamp": datetime.now(UTC).isoformat(),
                     })
 

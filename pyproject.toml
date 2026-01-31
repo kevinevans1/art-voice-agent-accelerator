@@ -47,6 +47,7 @@ dependencies = [
     "azure-communication-callautomation>=1.4.0",
     "azure-communication-sms",
     "azure-communication-email",
+    "azure-communication-messages>=1.1.0",  # WhatsApp Advanced Messaging
     "azure-communication-identity>=1.5.0",
     "azure-keyvault-secrets>=4.7.0",
     "azure-eventgrid>=4.10.0",

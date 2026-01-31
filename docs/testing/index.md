@@ -61,6 +61,14 @@ flowchart TB
 
     [:octicons-arrow-right-24: Load Testing](../operations/load-testing.md)
 
+-   :material-check-decagram:{ .lg .middle } **Deployment Verification**
+
+    ---
+
+    End-to-end deployment verification and multi-agent testing
+
+    [:octicons-arrow-right-24: Deployment Verification](deployment-verification.md)
+
 </div>
 
 ---

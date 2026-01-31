@@ -228,6 +228,21 @@ resource "azurerm_container_app" "backend" {
         value = azurerm_application_insights.main.connection_string
       }
 
+      # ======================================================================
+      # OBSERVABILITY / TRACING
+      # ======================================================================
+      # OpenTelemetry tracing for AI Foundry Agents visualization
+      env {
+        name  = "ENABLE_TRACING"
+        value = tostring(var.enable_tracing)
+      }
+
+      # GenAI content recording (captures prompts/completions in traces)
+      env {
+        name  = "AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED"
+        value = tostring(var.enable_genai_content_recording)
+      }
+
       # Python runtime
       env {
         name  = "PYTHONUNBUFFERED"
