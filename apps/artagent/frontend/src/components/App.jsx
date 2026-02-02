@@ -263,9 +263,9 @@ function RealTimeVoiceApp() {
   const [showScenarioMenu, setShowScenarioMenu] = useState(false);
   const scenarioButtonRef = useRef(null);
   
-  // Helper to get scenario for current session (default: banking)
+  // Helper to get scenario for current session (default: utilities)
   const getSessionScenario = useCallback((sessId = sessionId) => {
-    return sessionProfiles[sessId]?.scenario || 'banking';
+    return sessionProfiles[sessId]?.scenario || 'utilities';
   }, [sessionProfiles, sessionId]);
   
   // Helper to set scenario for current session
@@ -291,6 +291,7 @@ function RealTimeVoiceApp() {
     // Fall back to type-based icons
     if (scenario?.startsWith('custom_')) return '🎭';
     if (scenario === 'banking') return '🏦';
+    if (scenario === 'utilities') return '⚡';
     return '🛡️'; // insurance default
   }, [getSessionScenario, sessionScenarioConfig]);
   // Profile menu state moved to ProfileButton component
@@ -3653,7 +3654,9 @@ function RealTimeVoiceApp() {
                   ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)'
                   : getSessionScenario() === 'banking' 
                     ? 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)'
-                    : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+                    : getSessionScenario() === 'utilities'
+                      ? 'linear-gradient(135deg, #f59e0b 0%, #eab308 100%)'
+                      : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
                 color: '#ffffff',
                 fontSize: '18px',
                 fontWeight: '500',
@@ -3707,6 +3710,7 @@ function RealTimeVoiceApp() {
                 {[
                   { id: 'banking', icon: '🏦', label: 'Banking' },
                   { id: 'insurance', icon: '🛡️', label: 'Insurance' },
+                  { id: 'utilities', icon: '⚡', label: 'Utilities' },
                 ].map(({ id, icon, label }) => {
                   // Check active state - match both direct id and custom_id formats
                   const currentScenario = getSessionScenario();
@@ -3797,7 +3801,7 @@ function RealTimeVoiceApp() {
                 {/* Custom Scenarios (show all custom scenarios for the session) */}
                 {sessionScenarioConfig?.scenarios?.length > 0 && (() => {
                   // Industry template names that should not appear in custom scenarios
-                  const industryTemplateNames = new Set(['banking', 'insurance', 'default']);
+                  const industryTemplateNames = new Set(['banking', 'insurance', 'utilities', 'default']);
                   // Deduplicate scenarios by name (case-insensitive), keeping latest version
                   // Also filter out scenarios that match industry template names
                   const seenNames = new Set();
@@ -4122,12 +4126,16 @@ function RealTimeVoiceApp() {
                         ? "rgba(245,158,11,0.1)"
                         : getSessionScenario() === 'banking' 
                           ? "rgba(99,102,241,0.1)" 
-                          : "rgba(14,165,233,0.1)",
+                          : getSessionScenario() === 'utilities'
+                            ? "rgba(245,158,11,0.1)"
+                            : "rgba(14,165,233,0.1)",
                       color: getSessionScenario()?.startsWith('custom_')
                         ? "#f59e0b"
                         : getSessionScenario() === 'banking' 
                           ? "#6366f1" 
-                          : "#0ea5e9",
+                          : getSessionScenario() === 'utilities'
+                            ? "#f59e0b"
+                            : "#0ea5e9",
                       fontSize: "10px",
                       fontWeight: 600,
                       textTransform: "uppercase",

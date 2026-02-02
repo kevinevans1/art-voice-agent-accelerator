@@ -35,8 +35,13 @@ backend/
 registries/
 ├── agentstore/          # Agent definitions (YAML-based)
 ├── toolstore/           # Tool registry (@register_tool)
-└── scenariostore/       # Industry scenarios (banking, etc.)
+└── scenariostore/       # Industry scenarios (utilities, banking, insurance)
 ```
+
+**Available Scenarios:**
+- **utilities** — Energy utilities (default): billing, outages, payments, service requests
+- **banking** — Financial services: accounts, fraud, investments
+- **insurance** — Insurance: claims, policies, FNOL
 
 **Usage:**
 ```python

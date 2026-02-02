@@ -31,14 +31,27 @@ const IndustryTag = () => {
       };
     }
 
+    if (currentBranch.includes('utilities') || currentBranch.includes('energy')) {
+      return {
+        label: 'Energy Utilities Edition',
+        palette: {
+          background: 'linear-gradient(135deg, #f59e0b, #eab308)',
+          color: '#0f172a',
+          borderColor: 'rgba(245,158,11,0.45)',
+          shadow: '0 12px 28px rgba(245,158,11,0.25)',
+          textShadow: '0 1px 2px rgba(120,53,15,0.3)',
+        },
+      };
+    }
+
     return {
-      label: 'Banking Edition',
+      label: 'Energy Utilities Edition',
       palette: {
-        background: 'linear-gradient(135deg, #4338ca, #6366f1)',
-        color: '#f8fafc',
-        borderColor: 'rgba(99,102,241,0.45)',
-        shadow: '0 12px 28px rgba(99,102,241,0.25)',
-        textShadow: '0 1px 2px rgba(30,64,175,0.4)',
+        background: 'linear-gradient(135deg, #f59e0b, #eab308)',
+        color: '#0f172a',
+        borderColor: 'rgba(245,158,11,0.45)',
+        shadow: '0 12px 28px rgba(245,158,11,0.25)',
+        textShadow: '0 1px 2px rgba(120,53,15,0.3)',
       },
     };
   };

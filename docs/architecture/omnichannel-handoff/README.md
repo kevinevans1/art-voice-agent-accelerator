@@ -200,6 +200,182 @@ When you run `azd up`, the following Azure resources are deployed:
 
 ---
 
+## Why These Azure Services?
+
+Each Azure service in this architecture was chosen for specific technical and business reasons. This section explains the **rationale** behind each selection and the **alternatives considered**.
+
+### Communication Layer
+
+#### Azure Communication Services (ACS)
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | Native Azure telephony with real-time WebSocket audio streaming, PSTN connectivity, and unified APIs for voice, SMS, and WhatsApp in a single service. |
+| **Key Benefits** | • Sub-100ms audio latency via WebSocket streaming<br>• Built-in Call Automation SDK for event-driven call handling<br>• Single service for voice, SMS, email, and WhatsApp (future)<br>• Managed phone number provisioning<br>• Seamless integration with Azure AI services |
+| **Alternatives Considered** | • **Twilio**: More mature but requires separate integration per channel, no native Azure identity support<br>• **Vonage**: Good APIs but higher latency for real-time audio<br>• **Custom SIP trunking**: Higher complexity, no managed WebSocket layer |
+| **Trade-offs** | ACS has fewer regions than Twilio; WhatsApp integration requires Meta Business verification |
+
+### AI Services Layer
+
+#### Azure AI Foundry (Cognitive Services Account)
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | Unified platform for hosting Azure OpenAI models with enterprise security, managed identity support, and project-based organization for multi-agent architectures. |
+| **Key Benefits** | • Single control plane for all AI models<br>• Native RBAC with Azure AD/Entra ID<br>• Built-in content safety and responsible AI filters<br>• Shared thread state across agents (Assistants API)<br>• Regional deployment for data residency compliance |
+| **Alternatives Considered** | • **Direct OpenAI API**: Lower latency but no Azure identity, less enterprise controls<br>• **AWS Bedrock**: Multi-model but weaker real-time voice support<br>• **Self-hosted LLMs**: Full control but massive operational overhead |
+| **Trade-offs** | Model availability varies by region; some models have quota limits that require planning |
+
+#### Azure OpenAI Models
+
+| Model | Why Chosen | Use Case |
+|-------|------------|----------|
+| **gpt-4o** | Best balance of reasoning, speed, and cost for complex agent conversations | Primary chat model for SpeechCascade mode |
+| **gpt-4o-mini** | 10x cheaper, faster responses for simple routing/classification | Tool selection, intent classification |
+| **gpt-4o-realtime** | Only model supporting native real-time audio streaming with <300ms latency | VoiceLive mode for lowest latency |
+
+#### Azure Speech Services
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | Industry-leading neural TTS with 400+ voices, real-time STT with phrase lists, and custom voice/speech model support. |
+| **Key Benefits** | • 400+ neural voices across 140+ languages<br>• Phrase list biasing for domain vocabulary (account numbers, product names)<br>• Custom neural voice for brand consistency<br>• Real-time streaming recognition (interim results)<br>• Pronunciation customization via SSML |
+| **Alternatives Considered** | • **Google Cloud Speech**: Strong STT but weaker neural TTS voice quality<br>• **Amazon Polly/Transcribe**: Good but requires cross-cloud networking<br>• **Deepgram**: Lower latency STT but limited TTS options<br>• **ElevenLabs**: Superior voice quality but higher cost and latency |
+| **Trade-offs** | Custom neural voice requires 300+ audio samples and approval process; some voices only available in specific regions |
+
+### Data Layer
+
+#### Azure Cache for Redis Enterprise
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | Sub-millisecond latency required for real-time voice session state; Redis Enterprise provides RBAC authentication (no access keys), high availability, and clustering. |
+| **Key Benefits** | • <1ms read/write latency (critical for voice turns)<br>• RBAC with Managed Identity (no secrets to rotate)<br>• Active-active geo-replication (Enterprise tier)<br>• Volatile LRU eviction for session data<br>• OSS Cluster mode for horizontal scaling |
+| **Alternatives Considered** | • **Azure Cache for Redis (Standard)**: Cheaper but requires access keys, no RBAC<br>• **Cosmos DB only**: 5-10ms latency too slow for real-time state<br>• **In-memory (app-level)**: No persistence across container restarts, breaks scaling |
+| **Trade-offs** | Enterprise tier is more expensive; requires cluster-aware client configuration |
+
+**Why Two Data Stores?**
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Redis (HOT)                        Cosmos DB (WARM/COLD)               │
+│  ────────────────────────────────   ────────────────────────────────── │
+│  • Active call state                 • Conversation history            │
+│  • Current agent context             • Customer profiles                │
+│  • Audio buffer pointers             • Cross-session analytics          │
+│  • Handoff in-flight data            • Audit logs                       │
+│                                                                          │
+│  Access: <1ms                        Access: 5-10ms                      │
+│  TTL: Session duration               TTL: Months/years                   │
+│  Purpose: Real-time operations       Purpose: Durable persistence        │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Azure Cosmos DB (MongoDB API)
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | Global distribution for multi-region deployments, flexible schema for evolving conversation data, and MongoDB API for developer familiarity. |
+| **Key Benefits** | • Single-digit millisecond reads at 99th percentile<br>• Automatic indexing and TTL for conversation cleanup<br>• MongoDB API = familiar query syntax<br>• Serverless tier available for dev/test cost savings<br>• Partition key on `customer_id` for omnichannel context |
+| **Alternatives Considered** | • **Azure SQL**: Stronger consistency but schema rigidity for evolving transcript formats<br>• **PostgreSQL Flexible**: Good but no native global distribution<br>• **MongoDB Atlas**: Excellent but requires cross-service networking, separate billing |
+| **Trade-offs** | Request Unit (RU) pricing requires capacity planning; complex queries can consume high RUs |
+
+#### Azure Blob Storage
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | Cost-effective storage for audio recordings, transcripts, and prompt templates with lifecycle management. |
+| **Key Benefits** | • $0.018/GB for hot tier (audio recordings)<br>• Lifecycle policies for automatic archival<br>• Native integration with Speech Services batch transcription<br>• Immutable storage option for compliance |
+| **Alternatives Considered** | • **Azure Files**: Higher cost, unnecessary POSIX features<br>• **Cosmos DB attachments**: Limited to 2MB, expensive at scale |
+| **Trade-offs** | Requires separate CDN for low-latency audio playback |
+
+### Compute Layer
+
+#### Azure Container Apps
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | Serverless containers with built-in autoscaling, WebSocket support, and zero Kubernetes management overhead. |
+| **Key Benefits** | • Scale to zero (cost savings in dev/test)<br>• Native WebSocket support for ACS media streaming<br>• Built-in revision management and traffic splitting<br>• Managed identity injection<br>• Dapr integration available for microservices patterns |
+| **Alternatives Considered** | • **Azure Kubernetes Service (AKS)**: Full control but significant operational overhead<br>• **Azure App Service**: Limited WebSocket connection scaling<br>• **Azure Functions**: Cold start latency unacceptable for real-time voice |
+| **Trade-offs** | Less control than AKS; some advanced networking scenarios require workarounds |
+
+#### Azure Container Registry
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | Native integration with Container Apps, geo-replication for multi-region, and vulnerability scanning. |
+| **Key Benefits** | • Zero-config integration with Container Apps (managed identity pull)<br>• Image signing and vulnerability scanning<br>• Retention policies for image cleanup |
+| **Alternatives Considered** | • **Docker Hub**: Public by default, rate limiting<br>• **GitHub Container Registry**: Good but requires separate Azure auth setup |
+| **Trade-offs** | Basic tier sufficient for most deployments; Premium required for geo-replication |
+
+### Configuration & Security Layer
+
+#### Azure App Configuration
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | Centralized configuration management with feature flags, eliminating environment variable sprawl across containers. |
+| **Key Benefits** | • Dynamic configuration updates without redeployment<br>• Feature flags for gradual rollouts (e.g., enable WhatsApp)<br>• Key Vault references for secret management<br>• Configuration snapshots for point-in-time recovery |
+| **Alternatives Considered** | • **Environment variables only**: No dynamic updates, hard to manage at scale<br>• **Consul/etcd**: Additional infrastructure to manage<br>• **LaunchDarkly**: Excellent feature flags but separate service and cost |
+| **Trade-offs** | Requires SDK integration; adds ~10ms latency for config reads (mitigated by caching) |
+
+#### Azure Key Vault
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | HSM-backed secret storage with automatic rotation, audit logging, and native integration with all Azure services. |
+| **Key Benefits** | • FIPS 140-2 Level 2 validated HSMs<br>• Automatic certificate rotation<br>• Complete audit trail for compliance<br>• Managed Identity access (no secrets to access secrets) |
+| **Alternatives Considered** | • **HashiCorp Vault**: More features but separate infrastructure<br>• **AWS Secrets Manager**: Good but cross-cloud complexity |
+| **Trade-offs** | Soft-delete recovery period can complicate rapid redeployments |
+
+#### User-Assigned Managed Identities
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | Zero-secret architecture for service-to-service authentication, surviving container recreation. |
+| **Key Benefits** | • No connection strings or API keys in configuration<br>• Survives container restarts (unlike system-assigned)<br>• Single identity can access multiple resources<br>• Native RBAC across all Azure services |
+| **Alternatives Considered** | • **System-assigned identities**: Simpler but tied to resource lifecycle<br>• **Service principals with secrets**: Requires rotation management |
+| **Trade-offs** | Requires explicit RBAC role assignments during provisioning |
+
+### Observability Layer
+
+#### Azure Application Insights
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | End-to-end distributed tracing with OpenTelemetry, custom metrics for voice latency, and native alerting. |
+| **Key Benefits** | • OpenTelemetry collector support (vendor-neutral instrumentation)<br>• Custom metrics for STT/TTS/LLM latency tracking<br>• Live metrics stream for real-time debugging<br>• Smart detection for anomaly alerting<br>• Application Map for dependency visualization |
+| **Alternatives Considered** | • **Datadog**: Superior UI but significant cost<br>• **New Relic**: Good APM but separate billing<br>• **Jaeger/Grafana**: Requires self-hosting |
+| **Trade-offs** | Query language (KQL) has learning curve; sampling can miss rare errors |
+
+#### Log Analytics Workspace
+
+| Aspect | Details |
+|--------|---------|
+| **Why Chosen** | Unified log aggregation for all Azure services, required for Container Apps and Application Insights. |
+| **Key Benefits** | • Single query surface for all logs<br>• Retention policies for cost management<br>• Cross-resource queries for debugging<br>• Export to storage for long-term retention |
+| **Alternatives Considered** | • **Splunk**: Powerful but expensive and separate infrastructure<br>• **ELK Stack**: Flexible but operational overhead |
+| **Trade-offs** | Ingestion costs can grow with verbose logging; requires careful log level management |
+
+### Decision Summary
+
+| Service | Primary Driver | Cost Tier Used |
+|---------|----------------|----------------|
+| **Azure Communication Services** | Native telephony + WebSocket audio | Pay-per-use |
+| **Azure AI Foundry** | Unified AI model management | Standard |
+| **Azure OpenAI** | Best-in-class LLM with Azure security | gpt-4o Standard |
+| **Azure Speech Services** | Real-time STT/TTS with phrase biasing | Standard S0 |
+| **Redis Enterprise** | Sub-ms latency + RBAC | Enterprise E10 |
+| **Cosmos DB** | Global distribution + MongoDB API | Serverless (dev) |
+| **Container Apps** | Serverless containers + WebSocket | Consumption |
+| **App Configuration** | Centralized config + feature flags | Standard |
+| **Key Vault** | HSM-backed secrets | Standard |
+| **Application Insights** | OpenTelemetry + voice metrics | Pay-per-use |
+
+> **Architecture Principle:** Every service was selected to optimize for **real-time voice latency** while maintaining **enterprise security** (managed identity, RBAC) and **operational simplicity** (serverless, managed services).
+
+---
+
 ## How It Works: Technical Walkthrough
 
 ### Step 1: Phone Call Arrives

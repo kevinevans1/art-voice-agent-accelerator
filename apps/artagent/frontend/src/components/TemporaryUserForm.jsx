@@ -353,7 +353,7 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
 
   const [mode, setMode] = useState('create'); // 'create' | 'lookup'
-  const [scenario, setScenario] = useState('banking'); // 'banking' | 'insurance'
+  const [scenario, setScenario] = useState('utilities'); // 'banking' | 'insurance' | 'utilities'
   const [lookupEmail, setLookupEmail] = useState('');
   const [lookupPending, setLookupPending] = useState(false);
   const [lookupError, setLookupError] = useState('');
@@ -602,6 +602,18 @@ const TemporaryUserFormComponent = ({ apiBaseUrl, onClose, sessionId, onSuccess 
             disabled={lookupPending}
           >
             🛡️ Insurance
+          </button>
+          <button
+            type="button"
+            style={{
+              ...formStyles.modeButton(scenario === 'utilities'),
+              backgroundColor: scenario === 'utilities' ? '#f59e0b' : '#f8fafc',
+              borderColor: scenario === 'utilities' ? '#d97706' : 'rgba(148,163,184,0.5)',
+            }}
+            onClick={() => setScenario('utilities')}
+            disabled={lookupPending}
+          >
+            ⚡ Utilities
           </button>
         </div>
       )}
