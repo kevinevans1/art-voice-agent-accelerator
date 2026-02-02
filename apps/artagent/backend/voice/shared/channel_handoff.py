@@ -122,16 +122,24 @@ class ChannelHandoffHandler:
         try:
             # 1. Save context for continuity
             if self._context_manager:
-                context = CustomerContext(
+                # Get or create the customer context
+                context = await self._context_manager.get_or_create(
                     customer_id=customer_id,
                     phone_number=customer_id if target_channel == "whatsapp" else None,
-                    current_channel=ChannelType.VOICE,
-                    foundry_thread_id=session_id,
-                    conversation_summary=conversation_summary,
-                    collected_data=collected_data or {},
-                    active=True,
                 )
-                await self._context_manager.save_context(context)
+                # Update with conversation data
+                context.conversation_summary = conversation_summary
+                context.update_collected_data(collected_data or {})
+                # Add voice session if not exists
+                if session_id:
+                    active_voice = context.get_active_session("voice")
+                    if not active_voice:
+                        context.add_session("voice", session_id)
+                    else:
+                        # End the voice session as transferred
+                        context.end_session(session_id, "transferred", conversation_summary)
+                # Save to Cosmos/Redis
+                await self._context_manager.save(context)
                 logger.debug("Saved customer context for handoff")
 
             # 2. Build handoff message for target channel

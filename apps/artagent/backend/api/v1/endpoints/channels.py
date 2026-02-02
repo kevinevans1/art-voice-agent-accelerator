@@ -19,7 +19,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from apps.artagent.backend.channels.base import ChannelType
@@ -33,12 +33,28 @@ logger = get_logger("api.channels")
 router = APIRouter(tags=["Channels"])
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Adapters (lazily initialized)
+# Dependency Injection - Get managers from app.state
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _whatsapp_adapter: WhatsAppAdapter | None = None
 _webchat_adapter: WebChatAdapter | None = None
-_context_manager: CustomerContextManager | None = None
+
+
+def get_context_manager_from_state(request: Request) -> CustomerContextManager:
+    """
+    Get CustomerContextManager from app.state.
+    
+    This is the proper way to access the context manager that was
+    initialized with real Cosmos/Redis connections at app startup.
+    """
+    context_mgr = getattr(request.app.state, "customer_context_manager", None)
+    if context_mgr is None:
+        # Fallback for testing or if not initialized
+        logger.warning("CustomerContextManager not in app.state, creating fallback instance")
+        cosmos = getattr(request.app.state, "cosmos", None)
+        redis = getattr(request.app.state, "redis", None)
+        context_mgr = CustomerContextManager(cosmos_manager=cosmos, redis_manager=redis)
+    return context_mgr
 
 
 async def get_whatsapp_adapter() -> WhatsAppAdapter:
@@ -57,15 +73,6 @@ async def get_webchat_adapter() -> WebChatAdapter:
         _webchat_adapter = WebChatAdapter()
         await _webchat_adapter.initialize()
     return _webchat_adapter
-
-
-def get_context_manager() -> CustomerContextManager:
-    """Get or create context manager."""
-    global _context_manager
-    if _context_manager is None:
-        # TODO: Inject actual Cosmos and Redis managers from app state
-        _context_manager = CustomerContextManager()
-    return _context_manager
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -146,7 +153,7 @@ async def whatsapp_webhook(request: Request) -> dict[str, Any]:
             event_type = event.get("eventType", "")
             if "ChatMessageReceivedInThread" in event_type or "AdvancedMessage" in event_type:
                 data = event.get("data", {})
-                await process_whatsapp_message(data)
+                await process_whatsapp_message(data, request)
 
         return {"status": "ok"}
 
@@ -260,10 +267,10 @@ async def process_webchat_message(
     )
 
 
-async def process_whatsapp_message(data: dict[str, Any]) -> None:
+async def process_whatsapp_message(data: dict[str, Any], request: Request) -> None:
     """Process an incoming WhatsApp message."""
     adapter = await get_whatsapp_adapter()
-    context_mgr = get_context_manager()
+    context_mgr = get_context_manager_from_state(request)
 
     # Parse the message
     message = await adapter.handle_incoming(data)
@@ -280,18 +287,23 @@ async def process_whatsapp_message(data: dict[str, Any]) -> None:
         context.add_session("whatsapp", message.session_id)
         await context_mgr.save(context)
 
-    # TODO: Route message to appropriate agent via Foundry
-    # For now, just log it
+    # Process message with context awareness
+    response, agent_name = await process_webchat_message(
+        content=message.content,
+        customer_id=message.customer_id,
+        context=context,
+    )
+
     logger.info(
         "WhatsApp message from %s: %s",
         message.customer_id,
         message.content[:100],
     )
 
-    # Echo response for testing
+    # Send context-aware response
     await adapter.send_message(
         customer_id=message.customer_id,
-        message=f"Thanks for your message! I received: {message.content[:50]}...",
+        message=response,
         session_id=message.session_id,
     )
 
@@ -313,13 +325,20 @@ async def webchat_websocket(websocket: WebSocket, customer_id: str):
     """
     connection_manager = get_connection_manager()
     session_id = f"web_{customer_id}_{uuid.uuid4().hex[:8]}"
+    
+    # Get context manager from app.state
+    context_mgr = getattr(websocket.app.state, "customer_context_manager", None)
+    if context_mgr is None:
+        # Fallback
+        cosmos = getattr(websocket.app.state, "cosmos", None)
+        redis = getattr(websocket.app.state, "redis", None)
+        context_mgr = CustomerContextManager(cosmos_manager=cosmos, redis_manager=redis)
 
     try:
         # Accept connection
         await connection_manager.connect(websocket, customer_id, session_id)
 
         # Get customer context
-        context_mgr = get_context_manager()
         context = await context_mgr.get_or_create(customer_id)
 
         # Check if this is a handoff (context exists with conversation)
@@ -387,8 +406,7 @@ async def webchat_websocket(websocket: WebSocket, customer_id: str):
     finally:
         await connection_manager.disconnect(customer_id)
 
-        # End session
-        context_mgr = get_context_manager()
+        # End session using the context_mgr we already have
         await context_mgr.end_customer_session(
             customer_id=customer_id,
             session_id=session_id,
@@ -412,7 +430,10 @@ async def webchat_status() -> dict[str, Any]:
 
 
 @router.post("/handoff", response_model=HandoffResponse)
-async def initiate_handoff(request: HandoffRequest) -> HandoffResponse:
+async def initiate_handoff(
+    handoff_request: HandoffRequest,
+    request: Request,
+) -> HandoffResponse:
     """
     Initiate a channel handoff.
 
@@ -421,31 +442,31 @@ async def initiate_handoff(request: HandoffRequest) -> HandoffResponse:
     """
     logger.info(
         "Handoff requested: %s -> %s for customer %s",
-        request.source_channel,
-        request.target_channel,
-        request.customer_id,
+        handoff_request.source_channel,
+        handoff_request.target_channel,
+        handoff_request.customer_id,
     )
 
     try:
-        # Get context manager
-        context_mgr = get_context_manager()
+        # Get context manager from app.state
+        context_mgr = get_context_manager_from_state(request)
 
         # Update customer context
         context = await context_mgr.get_or_create(
-            customer_id=request.customer_id,
-            phone_number=request.customer_id,
+            customer_id=handoff_request.customer_id,
+            phone_number=handoff_request.customer_id,
         )
 
         # Update with conversation data
-        context.conversation_summary = request.conversation_summary
-        context.update_collected_data(request.collected_data)
+        context.conversation_summary = handoff_request.conversation_summary
+        context.update_collected_data(handoff_request.collected_data)
 
         # End source channel session
-        if request.session_id:
+        if handoff_request.session_id:
             context.end_session(
-                session_id=request.session_id,
+                session_id=handoff_request.session_id,
                 status="transferred",
-                summary=request.conversation_summary,
+                summary=handoff_request.conversation_summary,
             )
 
         await context_mgr.save(context)
@@ -454,32 +475,32 @@ async def initiate_handoff(request: HandoffRequest) -> HandoffResponse:
         handoff_id = f"hoff_{uuid.uuid4().hex[:12]}"
 
         # Initiate target channel notification
-        if request.target_channel == "whatsapp":
+        if handoff_request.target_channel == "whatsapp":
             adapter = await get_whatsapp_adapter()
             success = await adapter.send_handoff_notification(
-                customer_id=request.customer_id,
-                source_channel=ChannelType(request.source_channel),
-                context_summary=request.conversation_summary,
+                customer_id=handoff_request.customer_id,
+                source_channel=ChannelType(handoff_request.source_channel),
+                context_summary=handoff_request.conversation_summary,
             )
             handoff_link = None
 
-        elif request.target_channel == "webchat":
+        elif handoff_request.target_channel == "webchat":
             # Generate web chat link
             # In production, this would be a proper deep link
-            handoff_link = f"/chat?customer_id={request.customer_id}&handoff={handoff_id}"
+            handoff_link = f"/chat?customer_id={handoff_request.customer_id}&handoff={handoff_id}"
             success = True
 
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported target channel: {request.target_channel}",
+                detail=f"Unsupported target channel: {handoff_request.target_channel}",
             )
 
         return HandoffResponse(
             success=success,
             handoff_id=handoff_id,
-            target_channel=request.target_channel,
-            message=f"Handoff initiated to {request.target_channel}",
+            target_channel=handoff_request.target_channel,
+            message=f"Handoff initiated to {handoff_request.target_channel}",
             handoff_link=handoff_link,
         )
 
@@ -494,13 +515,16 @@ async def initiate_handoff(request: HandoffRequest) -> HandoffResponse:
 
 
 @router.get("/customer/{customer_id}/context", response_model=CustomerContextResponse)
-async def get_customer_context(customer_id: str) -> CustomerContextResponse:
+async def get_customer_context(
+    customer_id: str,
+    request: Request,
+) -> CustomerContextResponse:
     """
     Get customer context for a given customer ID.
 
     Returns conversation history, collected data, and session information.
     """
-    context_mgr = get_context_manager()
+    context_mgr = get_context_manager_from_state(request)
     context = await context_mgr.get_or_create(customer_id)
 
     return CustomerContextResponse(
@@ -519,12 +543,13 @@ async def get_customer_context(customer_id: str) -> CustomerContextResponse:
 async def update_customer_context(
     customer_id: str,
     data: dict[str, Any],
+    request: Request,
 ) -> dict[str, str]:
     """
     Update customer context with additional data.
 
     Body should contain data to merge into collected_data.
     """
-    context_mgr = get_context_manager()
+    context_mgr = get_context_manager_from_state(request)
     await context_mgr.update_customer_data(customer_id, data)
     return {"status": "updated"}

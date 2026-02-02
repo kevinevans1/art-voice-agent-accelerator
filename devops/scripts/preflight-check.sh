@@ -9,14 +9,20 @@
 #   - Model availability
 #   - Quotas and limits
 #   - Environment configuration
+#   - Phone number configuration
+#   - Deployment workflow readiness
 #
 # Usage:
-#   ./devops/scripts/preflight-check.sh [--fix] [--verbose]
+#   ./devops/scripts/preflight-check.sh [--fix] [--fix-all] [--verbose]
 #
 # Options:
-#   --fix       Attempt to fix issues automatically
+#   --fix       Attempt to fix issues automatically (interactive)
+#   --fix-all   Fix all issues without prompting
 #   --verbose   Show detailed output
 #   --json      Output results as JSON
+#   --quick     Skip slow Azure API checks
+#
+# Updated: February 2026 - Added phone number, webchat-demo, deployment checks
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -45,9 +51,13 @@ FIXED=0
 
 # Options
 FIX_MODE=false
+FIX_ALL=false
 VERBOSE=false
 JSON_OUTPUT=false
 QUICK_MODE=false
+
+# Issues that can be fixed
+declare -a FIXABLE_ISSUES=()
 
 # Minimum versions
 MIN_PYTHON_VERSION="3.11"
@@ -87,6 +97,11 @@ while [[ $# -gt 0 ]]; do
             FIX_MODE=true
             shift
             ;;
+        --fix-all)
+            FIX_MODE=true
+            FIX_ALL=true
+            shift
+            ;;
         --verbose)
             VERBOSE=true
             shift
@@ -100,13 +115,20 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: $0 [--fix] [--verbose] [--json] [--quick]"
+            echo "Usage: $0 [--fix] [--fix-all] [--verbose] [--json] [--quick]"
             echo ""
             echo "Options:"
-            echo "  --fix       Attempt to fix issues automatically"
+            echo "  --fix       Attempt to fix issues automatically (interactive prompts)"
+            echo "  --fix-all   Fix all issues without prompting"
             echo "  --verbose   Show detailed output"
             echo "  --json      Output results as JSON"
             echo "  --quick     Skip slow Azure API checks"
+            echo ""
+            echo "Examples:"
+            echo "  $0                    # Run checks only"
+            echo "  $0 --fix              # Run checks and prompt to fix issues"
+            echo "  $0 --fix-all          # Automatically fix all issues"
+            echo "  $0 --quick --verbose  # Fast checks with details"
             exit 0
             ;;
         *)
@@ -174,6 +196,33 @@ fixed() {
     if [[ "$JSON_OUTPUT" == "false" ]]; then
         echo -e "  ${GREEN}⚡${NC} Fixed: $1"
     fi
+}
+
+add_fixable() {
+    # Add an issue that can be fixed
+    # Usage: add_fixable "issue_id" "description" "fix_command"
+    FIXABLE_ISSUES+=("$1|$2|$3")
+}
+
+prompt_fix() {
+    # Prompt user to fix an issue (unless --fix-all)
+    local description="$1"
+    local fix_command="$2"
+    
+    if [[ "$FIX_ALL" == "true" ]]; then
+        return 0  # Auto-approve
+    fi
+    
+    echo ""
+    echo -e "  ${YELLOW}Would you like to fix: $description?${NC}"
+    echo -e "  ${BLUE}Command: $fix_command${NC}"
+    read -p "  Fix this issue? [y/N] " -n 1 -r
+    echo ""
+    
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        return 0
+    fi
+    return 1
 }
 
 version_gte() {
@@ -675,6 +724,138 @@ check_quotas() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Check: Phone Number Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+check_phone_number() {
+    print_header "Phone Number Configuration"
+    
+    print_section "ACS Phone Number"
+    
+    # Check environment variable
+    PHONE_NUMBER=$(azd env get-values 2>/dev/null | grep ACS_SOURCE_PHONE_NUMBER | cut -d'=' -f2 | tr -d '"' || echo "")
+    
+    if [[ -n "$PHONE_NUMBER" && "$PHONE_NUMBER" != "placeholder" && "$PHONE_NUMBER" != "+1" ]]; then
+        pass "ACS_SOURCE_PHONE_NUMBER configured: $PHONE_NUMBER"
+    else
+        warn "ACS_SOURCE_PHONE_NUMBER not configured" "Voice telephony will be disabled"
+        info "To configure after deployment:"
+        info "  1. Azure Portal → Azure Communication Services → Phone Numbers"
+        info "  2. Acquire a phone number with voice capability"
+        info "  3. Run: azd env set ACS_SOURCE_PHONE_NUMBER '+1XXXXXXXXXX'"
+        info "  4. Run: azd provision (to update App Configuration)"
+        
+        if [[ "$FIX_MODE" == "true" ]]; then
+            echo ""
+            echo -e "  ${YELLOW}Note: Phone numbers must be acquired from Azure Portal.${NC}"
+            echo -e "  ${YELLOW}After acquiring, set with:${NC}"
+            echo -e "  ${CYAN}azd env set ACS_SOURCE_PHONE_NUMBER '+1XXXXXXXXXX'${NC}"
+        fi
+    fi
+    
+    # Check if BASE_URL is set (needed for ACS callbacks)
+    print_section "ACS Callback URL"
+    BASE_URL=$(azd env get-values 2>/dev/null | grep BASE_URL | cut -d'=' -f2 | tr -d '"' || echo "")
+    
+    if [[ -n "$BASE_URL" && "$BASE_URL" != "http://localhost"* ]]; then
+        pass "BASE_URL configured: $BASE_URL"
+    else
+        info "BASE_URL will be set during deployment"
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Check: Deployment Workflow
+# ─────────────────────────────────────────────────────────────────────────────
+
+check_deployment_workflow() {
+    print_header "Deployment Workflow Readiness"
+    
+    print_section "Azure Developer CLI Environment"
+    
+    # Check if azd is initialized
+    if [[ -d "${PROJECT_ROOT}/.azure" ]]; then
+        CURRENT_ENV=$(azd env list 2>/dev/null | grep -E '^\*' | awk '{print $2}' || echo "")
+        if [[ -n "$CURRENT_ENV" ]]; then
+            pass "azd environment initialized: $CURRENT_ENV"
+        else
+            if [[ "$FIX_MODE" == "true" ]]; then
+                if prompt_fix "Initialize azd environment" "azd env new voice-agent-dev"; then
+                    if azd env new voice-agent-dev; then
+                        fixed "azd environment created"
+                    else
+                        fail "Could not create azd environment"
+                    fi
+                else
+                    warn "No active azd environment" "Run: azd env new <env-name>"
+                fi
+            else
+                warn "No active azd environment" "Run: azd env new <env-name>"
+            fi
+        fi
+    else
+        if [[ "$FIX_MODE" == "true" ]]; then
+            if prompt_fix "Initialize azd" "azd init --environment voice-agent-dev"; then
+                if azd init --environment voice-agent-dev; then
+                    fixed "azd initialized"
+                else
+                    fail "Could not initialize azd"
+                fi
+            else
+                fail "azd not initialized" "Run: azd init --environment <env-name>"
+            fi
+        else
+            fail "azd not initialized" "Run: azd init --environment <env-name>"
+        fi
+    fi
+    
+    print_section "Deployment Understanding"
+    
+    echo -e "  ${BLUE}ℹ${NC} Deployment consists of two steps:"
+    echo -e "    ${CYAN}1. azd provision${NC} - Creates Azure infrastructure"
+    echo -e "    ${CYAN}2. azd deploy${NC}    - Builds and deploys application code"
+    echo -e "  ${BLUE}ℹ${NC} Or use ${CYAN}azd up${NC} to run both together"
+    
+    print_section "Webchat Demo Service"
+    
+    # Check if webchat-demo has proper azure.yaml service definition
+    AZURE_YAML="${PROJECT_ROOT}/azure.yaml"
+    if [[ -f "$AZURE_YAML" ]]; then
+        if grep -q "webchat-demo" "$AZURE_YAML" 2>/dev/null; then
+            # Check if it has host configuration
+            if grep -A5 "webchat-demo" "$AZURE_YAML" | grep -q "host:" 2>/dev/null; then
+                pass "webchat-demo service configured in azure.yaml"
+            else
+                warn "webchat-demo may not have complete configuration"
+                info "Check azure.yaml for proper host configuration"
+            fi
+        else
+            info "webchat-demo not in azure.yaml (optional service)"
+        fi
+    fi
+    
+    print_section "Container Apps Readiness"
+    
+    # Check if there's an existing deployment we can check
+    if [[ "$QUICK_MODE" == "false" ]] && az account show &> /dev/null 2>&1; then
+        RESOURCE_GROUP=$(azd env get-values 2>/dev/null | grep AZURE_RESOURCE_GROUP | cut -d'=' -f2 | tr -d '"' || echo "")
+        
+        if [[ -n "$RESOURCE_GROUP" ]]; then
+            # Check if container apps exist
+            BACKEND_IMAGE=$(az containerapp show --name "artagent-backend-*" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].image" -o tsv 2>/dev/null || echo "")
+            
+            if [[ -n "$BACKEND_IMAGE" ]]; then
+                if echo "$BACKEND_IMAGE" | grep -q "containerapps-helloworld"; then
+                    warn "Backend using placeholder image" "Run 'azd deploy' to deploy application"
+                else
+                    pass "Backend has application image deployed"
+                fi
+            fi
+        fi
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -694,7 +875,7 @@ print_summary() {
         echo -e "${RED}${BOLD}❌ Preflight check FAILED${NC}"
         echo ""
         echo "Please resolve the failed checks before deployment."
-        echo "Run with --fix to attempt automatic fixes."
+        echo "Run with --fix to attempt automatic fixes, or --fix-all to fix without prompts."
         echo ""
         exit 1
     elif [[ $WARNINGS -gt 0 ]]; then
@@ -702,11 +883,21 @@ print_summary() {
         echo ""
         echo "Deployment may succeed, but review warnings above."
         echo ""
+        echo -e "${CYAN}Next steps:${NC}"
+        echo "  1. azd provision  # Create Azure infrastructure"
+        echo "  2. azd deploy     # Build and deploy application"
+        echo "  Or: azd up        # Do both in one command"
+        echo ""
         exit 0
     else
         echo -e "${GREEN}${BOLD}✅ Preflight check PASSED${NC}"
         echo ""
-        echo "Ready for deployment! Run: azd up"
+        echo -e "${CYAN}Ready for deployment!${NC}"
+        echo ""
+        echo -e "${CYAN}Next steps:${NC}"
+        echo "  1. azd provision  # Create Azure infrastructure"
+        echo "  2. azd deploy     # Build and deploy application"
+        echo "  Or: azd up        # Do both in one command"
         echo ""
         exit 0
     fi
@@ -755,6 +946,8 @@ main() {
     check_network
     check_project_structure
     check_quotas
+    check_phone_number
+    check_deployment_workflow
     
     if [[ "$JSON_OUTPUT" == "true" ]]; then
         output_json

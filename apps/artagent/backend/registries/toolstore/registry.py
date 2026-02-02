@@ -158,6 +158,14 @@ def _prepare_args(
     if not params:
         return [], {}
 
+    # Check if function accepts **kwargs (VAR_KEYWORD parameter)
+    # If so, pass arguments as keyword args directly
+    has_var_keyword = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params
+    )
+    if has_var_keyword:
+        return [], raw_args
+
     if len(params) == 1:
         param = params[0]
         annotation = param.annotation
@@ -259,6 +267,7 @@ def initialize_tools() -> int:
         # Utilities tools
         ("utilities.utilities", lambda: __import__("apps.artagent.backend.registries.toolstore.utilities.utilities", fromlist=[""])),
         ("utilities.handoffs", lambda: __import__("apps.artagent.backend.registries.toolstore.utilities.handoffs", fromlist=[""])),
+        ("utilities.extended", lambda: __import__("apps.artagent.backend.registries.toolstore.utilities.extended", fromlist=[""])),
     ]
     
     failed_modules = []

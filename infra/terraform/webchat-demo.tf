@@ -17,7 +17,9 @@ resource "azurerm_container_app" "webchat_demo" {
   resource_group_name          = azurerm_resource_group.main.name
   revision_mode                = "Single"
 
-  tags = local.tags
+  tags = merge(local.tags, {
+    "azd-service-name" = "webchat-demo"
+  })
 
   # Image is managed outside of terraform (i.e azd deploy)
   lifecycle {

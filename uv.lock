@@ -197,6 +197,7 @@ dependencies = [
     { name = "azure-communication-callautomation" },
     { name = "azure-communication-email" },
     { name = "azure-communication-identity" },
+    { name = "azure-communication-messages" },
     { name = "azure-communication-sms" },
     { name = "azure-core" },
     { name = "azure-cosmos" },
@@ -321,6 +322,7 @@ requires-dist = [
     { name = "azure-communication-callautomation", specifier = ">=1.4.0" },
     { name = "azure-communication-email" },
     { name = "azure-communication-identity", specifier = ">=1.5.0" },
+    { name = "azure-communication-messages", specifier = ">=1.1.0" },
     { name = "azure-communication-sms" },
     { name = "azure-core", specifier = ">=1.38.0" },
     { name = "azure-cosmos", specifier = ">=4.5.0" },
@@ -612,6 +614,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f6/9e/6cbc94f5c01406083960bea219ee9d9313ad925c894b6b5df3df1d3d51a0/azure-communication-identity-1.5.0.tar.gz", hash = "sha256:d3186403395b78066ff30313ac119693694d2da9e0c76e9ac70eaa590dcb29e8", size = 66685, upload-time = "2024-02-15T08:20:04.324Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b1/21/9266411a36a182e235ad9ed338a071e417d01d6804747ae959c2232399b0/azure_communication_identity-1.5.0-py3-none-any.whl", hash = "sha256:dd6dc7aafc9f3707ffbbf40a45f2b4ccb5dc67f4d1545e74b083f83f9afa7a1a", size = 65601, upload-time = "2024-02-15T08:20:06.825Z" },
+]
+
+[[package]]
+name = "azure-communication-messages"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core" },
+    { name = "isodate" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c9/ab/dcb6a8762cd0a0393e4a92c53cb3cace21680acb0c99d8ebfeec9993eb18/azure_communication_messages-1.1.0.tar.gz", hash = "sha256:d66ac5b4d18406832023c58224f1a982357297a9da5b0f3abd2a219d92214e40", size = 69060, upload-time = "2024-10-18T21:45:24.086Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/16/74c5a394a1db89607b6e353caf28ccc78d43d41565cb0842ca2463d2a681/azure_communication_messages-1.1.0-py3-none-any.whl", hash = "sha256:c035b953abd308f60f737d35b1e723e4c7f1f3f4ed19431853069ca06fca5fbe", size = 75110, upload-time = "2024-10-18T21:45:25.837Z" },
 ]
 
 [[package]]

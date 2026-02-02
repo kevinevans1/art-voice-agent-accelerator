@@ -57,6 +57,7 @@ from apps.artagent.backend.voice.shared.base import (
     OrchestratorContext,
     OrchestratorResult,
 )
+from apps.artagent.backend.voice.shared.channel_handoff import ChannelHandoffHandler
 from apps.artagent.backend.voice.shared.config_resolver import (
     DEFAULT_START_AGENT,
     resolve_from_app_state,
@@ -252,6 +253,9 @@ class CascadeOrchestratorAdapter:
     # Callbacks for integration with SpeechCascadeHandler
     _on_tts_chunk: Callable[[str], Awaitable[None]] | None = field(default=None, init=False)
     _on_agent_switch: Callable[[str, str], Awaitable[None]] | None = field(default=None, init=False)
+
+    # Channel handoff handler for voice → messaging transitions
+    _channel_handoff_handler: ChannelHandoffHandler | None = field(default=None, init=False)
 
     def __post_init__(self):
         """Initialize agent registry if not provided."""
@@ -644,6 +648,18 @@ class CascadeOrchestratorAdapter:
         """
         self._on_agent_switch = callback
 
+    def set_channel_handoff_handler(self, handler: ChannelHandoffHandler | None) -> None:
+        """
+        Set the channel handoff handler for voice → messaging transitions.
+
+        This handler manages context persistence and notification to target
+        channels (WhatsApp, WebChat) when the user opts for channel switch.
+
+        Args:
+            handler: ChannelHandoffHandler instance with CustomerContextManager
+        """
+        self._channel_handoff_handler = handler
+
     def update_scenario(
         self,
         agents: dict[str, UnifiedAgent],
@@ -963,6 +979,7 @@ class CascadeOrchestratorAdapter:
                     handoff_executed = False
                     handoff_target = None
                     handoff_greeting = None  # Store greeting for fallback
+                    channel_handoff_result = None  # Track channel handoff
                     for tool_call in tool_calls:
                         tool_name = tool_call.get("name", "")
                         if self.handoff_service.is_handoff(tool_name):
@@ -975,6 +992,34 @@ class CascadeOrchestratorAdapter:
                                     parsed_args = {}
                             else:
                                 parsed_args = raw_args if isinstance(raw_args, dict) else {}
+
+                            # Check for CHANNEL handoff (voice → messaging)
+                            # This is handled differently from agent handoffs
+                            if tool_name == "execute_channel_handoff":
+                                channel_handoff_result = await self._execute_channel_handoff(
+                                    tool_name=tool_name,
+                                    args=parsed_args,
+                                    context=context,
+                                    on_tool_start=on_tool_start,
+                                    on_tool_end=on_tool_end,
+                                    on_tts_chunk=on_tts_chunk,
+                                )
+                                if channel_handoff_result:
+                                    # Channel handoff returns OrchestratorResult directly
+                                    span.set_attribute("cascade.channel_handoff", True)
+                                    span.set_attribute("cascade.target_channel", channel_handoff_result.get("target_channel", "unknown"))
+                                    span.set_status(Status(StatusCode.OK))
+                                    return OrchestratorResult(
+                                        response_text=channel_handoff_result.get("end_call_message", "Thank you for calling!"),
+                                        tool_calls=tool_calls,
+                                        should_end_call=True,  # Signal to end the voice call
+                                        metadata={
+                                            "channel_handoff": True,
+                                            "target_channel": channel_handoff_result.get("target_channel"),
+                                            "handoff_id": channel_handoff_result.get("handoff_id"),
+                                        },
+                                    )
+                                continue  # Channel handoff failed, continue to next tool
 
                             # For handoff_to_agent, get target from arguments
                             # For other handoff tools (legacy), use handoff_map
@@ -2274,6 +2319,124 @@ class CascadeOrchestratorAdapter:
                 greeting=greeting,
             )
 
+    async def _execute_channel_handoff(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        context: OrchestratorContext,
+        on_tool_start: Callable[[str, Any], Awaitable[None]] | None = None,
+        on_tool_end: Callable[[str, Any], Awaitable[None]] | None = None,
+        on_tts_chunk: Callable[[str], Awaitable[None]] | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Execute a channel handoff (voice → WhatsApp/WebChat).
+
+        Unlike agent handoffs, channel handoffs:
+        1. Execute the tool to get handoff details
+        2. Save context via ChannelHandoffHandler (if available)
+        3. Return a result that signals the call should end
+
+        Args:
+            tool_name: The channel handoff tool name
+            args: Tool arguments (target_channel, customer_phone, etc.)
+            context: Current orchestrator context
+            on_tool_start: Callback for tool start
+            on_tool_end: Callback for tool end
+            on_tts_chunk: Callback for TTS output
+
+        Returns:
+            Dict with handoff result, or None if failed
+        """
+        with tracer.start_as_current_span(
+            "cascade.channel_handoff",
+            kind=SpanKind.INTERNAL,
+            attributes={
+                "cascade.tool_name": tool_name,
+                "cascade.target_channel": args.get("target_channel", "unknown"),
+            },
+        ) as span:
+            try:
+                # Emit tool_start
+                if on_tool_start:
+                    try:
+                        await on_tool_start(tool_name, json.dumps(args))
+                    except Exception:
+                        logger.debug("Failed to emit channel handoff tool_start", exc_info=True)
+
+                # Get the tool executor and execute
+                agent = self.current_agent_config
+                if not agent:
+                    logger.error("No agent configured for channel handoff")
+                    span.set_status(Status(StatusCode.ERROR, "No agent configured"))
+                    return None
+
+                # Execute the tool - this returns handoff metadata
+                result = await agent.execute_tool(tool_name, args)
+
+                logger.info(
+                    "Channel handoff tool executed | tool=%s result=%s",
+                    tool_name,
+                    {k: v for k, v in result.items() if k != "handoff_context"} if isinstance(result, dict) else result,
+                )
+
+                # Validate result has expected fields
+                if not isinstance(result, dict) or not result.get("handoff"):
+                    logger.warning("Channel handoff tool did not return handoff signal")
+                    span.set_status(Status(StatusCode.ERROR, "No handoff signal"))
+                    if on_tool_end:
+                        await on_tool_end(tool_name, result)
+                    return None
+
+                # Use ChannelHandoffHandler if available for context persistence
+                if self._channel_handoff_handler:
+                    try:
+                        handoff_result = await self._channel_handoff_handler.execute_handoff(
+                            target_channel=result.get("target_channel", "webchat"),
+                            customer_id=result.get("customer_id", args.get("customer_phone", "unknown")),
+                            conversation_summary=args.get("handoff_message", "Conversation from voice call"),
+                            collected_data=result.get("handoff_context", {}),
+                            session_id=context.session_id,
+                            handoff_message=args.get("handoff_message"),
+                            end_call_message=result.get("end_call_message"),
+                        )
+                        
+                        if handoff_result.success:
+                            result["handoff_id"] = handoff_result.handoff_id
+                            logger.info(
+                                "Channel handoff context saved | handoff_id=%s",
+                                handoff_result.handoff_id,
+                            )
+                    except Exception as e:
+                        logger.warning("ChannelHandoffHandler execution failed: %s", e)
+                        # Continue - the tool result still has the handoff info
+
+                # Emit tool_end
+                if on_tool_end:
+                    try:
+                        await on_tool_end(tool_name, result)
+                    except Exception:
+                        logger.debug("Failed to emit channel handoff tool_end", exc_info=True)
+
+                # Speak the end call message if we have TTS callback
+                end_call_message = result.get("end_call_message", "Thank you for calling!")
+                if on_tts_chunk and end_call_message:
+                    try:
+                        await on_tts_chunk(end_call_message)
+                    except Exception:
+                        logger.debug("Failed to emit channel handoff TTS", exc_info=True)
+
+                span.set_status(Status(StatusCode.OK))
+                span.set_attribute("cascade.handoff_success", True)
+                span.set_attribute("cascade.target_channel", result.get("target_channel"))
+
+                return result
+
+            except Exception as e:
+                logger.error("Channel handoff failed: %s", e, exc_info=True)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                return None
+
     # ─────────────────────────────────────────────────────────────────
     # Greeting Selection (delegates to HandoffService)
     # ─────────────────────────────────────────────────────────────────
@@ -2557,7 +2720,7 @@ def get_cascade_orchestrator(
     # Use resolved start_agent unless explicitly overridden
     effective_start_agent = start_agent or config.start_agent
 
-    return CascadeOrchestratorAdapter.create(
+    adapter = CascadeOrchestratorAdapter.create(
         start_agent=effective_start_agent,
         model_name=model_name,
         call_connection_id=call_connection_id,
@@ -2567,6 +2730,17 @@ def get_cascade_orchestrator(
         streaming=True,  # Explicitly disable streaming for cascade
         **kwargs,
     )
+
+    # Wire up channel handoff handler from app_state if available
+    if app_state is not None:
+        context_manager = getattr(app_state, "customer_context_manager", None)
+        if context_manager:
+            adapter.set_channel_handoff_handler(
+                ChannelHandoffHandler(context_manager=context_manager)
+            )
+            logger.debug("Channel handoff handler wired to orchestrator")
+
+    return adapter
 
 
 def create_cascade_orchestrator_func(

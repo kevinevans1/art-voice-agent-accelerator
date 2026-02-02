@@ -330,6 +330,14 @@ def register_external_services_step(manager: LifecycleManager, app: FastAPI) -> 
         app.state.speech_phrase_manager = PhraseListManager(initial_phrases=initial_bias)
         set_global_phrase_manager(app.state.speech_phrase_manager)
 
+        # Initialize CustomerContextManager for omnichannel handoff
+        from apps.artagent.backend.channels.context import CustomerContextManager
+        app.state.customer_context_manager = CustomerContextManager(
+            cosmos_manager=app.state.cosmos,
+            redis_manager=getattr(app.state, "redis", None),
+        )
+        logger.info("CustomerContextManager initialized with Cosmos and Redis")
+
         # Hydrate phrase list from Cosmos (non-blocking)
         await _hydrate_phrases_from_cosmos(app)
 

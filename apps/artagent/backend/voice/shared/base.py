@@ -42,6 +42,8 @@ class OrchestratorResult:
     output_tokens: int | None = None
     interrupted: bool = False
     error: str | None = None
+    should_end_call: bool = False  # Signal to end the voice call (e.g., channel handoff)
+    metadata: dict[str, Any] = field(default_factory=dict)  # Additional context
 
 
 __all__ = [
